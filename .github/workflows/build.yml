@@ -55,6 +55,10 @@ jobs:
         shell: pwsh
         run: New-Item -ItemType Directory -Force -Path ci-bundle-test
 
+      - name: Install Windows 10 SDK 10.0.19041.0
+        run: |
+           choco install winsdk-10.0.19041 -y
+
       - name: Pre-bundle check (surfaces the real Metro/Babel error, if any)
         run: npx react-native bundle --platform windows --dev false --entry-file index.js --bundle-output ci-bundle-test/index.windows.bundle --assets-dest ci-bundle-test --verbose
 
