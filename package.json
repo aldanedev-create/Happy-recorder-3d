@@ -43,6 +43,7 @@
     "@types/jest": "29.5.0",
     "@types/react": "18.2.0",
     "@types/react-native": "0.72.0",
+    "react-test-renderer": "18.2.0",
     "@types/three": "0.160.0",
     "@typescript-eslint/eslint-plugin": "5.59.0",
     "@typescript-eslint/parser": "5.59.0",
@@ -55,12 +56,16 @@
     "metro-react-native-babel-preset": "0.76.0",
     "prettier": "2.8.8",
     "react-native-clean-project": "4.0.1",
-    "react-test-renderer": "^18.2.0",
     "typescript": "5.0.4"
   },
   "peerDependencies": {
     "react": "18.2.0",
     "react-native": "0.72.0"
+  },
+  "overrides": {
+    "@babel/core": "^7.22.0",
+    "@babel/traverse": "^7.22.0",
+    "@babel/helpers": "^7.22.0"
   },
   "jest": {
     "preset": "react-native",

@@ -47,10 +47,25 @@ jobs:
           cache: npm
       - uses: microsoft/setup-msbuild@v2
       - run: npm ci
+
+      - name: Verify single @babel/core resolution
+        run: npm ls @babel/core
+
+      - name: Pre-bundle check (surfaces the real Metro/Babel error, if any)
+        run: npx react-native bundle --platform windows --dev false --entry-file index.js --bundle-output ci-bundle-test/index.windows.bundle --assets-dest ci-bundle-test --verbose
+
       - name: Create release bundle
         shell: pwsh
         run: |
-          msbuild $env:APP_PROJECT /restore /m /p:Configuration=Release /p:Platform=x64 /p:AppxBundle=Always /p:AppxBundlePlatforms="x64" /p:UapAppxPackageBuildMode=StoreUpload /p:AppxPackageDir="$env:GITHUB_WORKSPACE\artifacts\"
+          msbuild $env:APP_PROJECT /restore /m /p:Configuration=Release /p:Platform=x64 /p:AppxBundle=Always /p:AppxBundlePlatforms="x64" /p:UapAppxPackageBuildMode=StoreUpload /p:AppxPackageDir="$env:GITHUB_WORKSPACE\artifacts\" -flp:logfile=msbuild.log;verbosity=diagnostic
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: msbuild-log
+          path: msbuild.log
+
       - name: Upload Windows package
         uses: actions/upload-artifact@v4
         with:
