@@ -6,20 +6,21 @@
  */
 const fs = require('fs');
 const path = require('path');
+const {getDefaultConfig, mergeConfig} = require('@react-native/metro-config');
 const exclusionList = require('metro-config/src/defaults/exclusionList');
 
 const rnwPath = fs.realpathSync(
   path.resolve(require.resolve('react-native-windows/package.json'), '..'),
 );
 
-module.exports = {
+const config = {
   resolver: {
     blockList: exclusionList([
-      // This stops "react-native run-windows" from causing the metro server to crash if its already running
+      // Stops "react-native run-windows" from crashing an already-running metro server
       new RegExp(
         `${path.resolve(__dirname, 'windows').replace(/[/\\]/g, '/')}.*`,
       ),
-      // This prevents "react-native run-windows" from hitting: EBUSY: resource busy or locked, open msbuild.ProjectImports.zip or other files produced by msbuild
+      // Prevents EBUSY: resource busy or locked, open msbuild.ProjectImports.zip
       new RegExp(`${rnwPath}/build/.*`),
       new RegExp(`${rnwPath}/target/.*`),
       /.*\.ProjectImports\.zip/,
@@ -34,3 +35,5 @@ module.exports = {
     }),
   },
 };
+
+module.exports = mergeConfig(getDefaultConfig(__dirname), config);
