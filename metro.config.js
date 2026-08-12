@@ -15,11 +15,14 @@ const rnwPath = fs.realpathSync(
 // [devMode
 const rnwRootNodeModules = path.resolve(rnwPath, '..', 'node_modules');
 const rnwPackages = path.resolve(rnwPath, '..', 'packages');
+const watchFolders = [rnwPath, rnwRootNodeModules, rnwPackages].filter((folder) =>
+  fs.existsSync(folder),
+);
 // devMode]
 
 module.exports = {
   // [devMode
-  watchFolders: [rnwPath, rnwRootNodeModules, rnwPackages],
+  watchFolders,
   // devMode]
   resolver: {
     blockList: exclusionList([
