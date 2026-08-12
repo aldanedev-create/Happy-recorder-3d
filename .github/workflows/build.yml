@@ -121,45 +121,39 @@ jobs:
               -NonInteractive
           }
 
-      # Verify all CppWinRT versions required by the project exist.
-      - name: Verify CppWinRT packages
+      # Verify the CppWinRT package actually used by HappyRecorderNative.
+      - name: Verify CppWinRT package
         shell: pwsh
         run: |
           $packagesDirectory = "$env:GITHUB_WORKSPACE\windows\packages"
 
-          $requiredVersions = @(
-            "2.0.200316.3",
-            "2.0.230706.1",
-            "2.0.240405.15"
-          )
+          $cppWinRT = Join-Path `
+            $packagesDirectory `
+            "Microsoft.Windows.CppWinRT.2.0.240405.15\build\native\Microsoft.Windows.CppWinRT.props"
 
-          foreach ($version in $requiredVersions) {
-            $props = Join-Path `
-              $packagesDirectory `
-              "Microsoft.Windows.CppWinRT.$version\build\native\Microsoft.Windows.CppWinRT.props"
-
-            if (Test-Path $props) {
-              Write-Host "FOUND: Microsoft.Windows.CppWinRT $version"
-            }
-            else {
-              Write-Host "NOT FOUND: Microsoft.Windows.CppWinRT $version"
-            }
-          }
-
-          $found = Get-ChildItem `
-            -Path $packagesDirectory `
-            -Directory `
-            -Filter "Microsoft.Windows.CppWinRT.*" `
-            -ErrorAction SilentlyContinue
-
-          Write-Host ""
-          Write-Host "Installed CppWinRT packages:"
-          $found | Select-Object -ExpandProperty FullName
-
-          if (-not $found) {
-            Write-Error "No Microsoft.Windows.CppWinRT package was restored."
+          if (!(Test-Path $cppWinRT)) {
+            Write-Error "Microsoft.Windows.CppWinRT 2.0.240405.15 was not restored."
             exit 1
           }
+
+          Write-Host "FOUND: $cppWinRT"
+
+      # Verify the React Native Windows NuGet package version.
+      - name: Verify Microsoft.ReactNative package
+        shell: pwsh
+        run: |
+          $packagesDirectory = "$env:GITHUB_WORKSPACE\windows\packages"
+
+          $reactNative = Join-Path `
+            $packagesDirectory `
+            "Microsoft.ReactNative.0.72.0"
+
+          if (!(Test-Path $reactNative)) {
+            Write-Error "Microsoft.ReactNative 0.72.0 was not restored."
+            exit 1
+          }
+
+          Write-Host "FOUND: $reactNative"
 
       # Show all Windows SDKs available on the runner.
       - name: Show Windows SDKs
