@@ -12,15 +12,7 @@ const rnwPath = fs.realpathSync(
   path.resolve(require.resolve('react-native-windows/package.json'), '..'),
 );
 
-// [devMode
-const rnwRootNodeModules = path.resolve(rnwPath, '..', 'node_modules');
-const rnwPackages = path.resolve(rnwPath, '..', 'packages');
-// devMode]
-
 module.exports = {
-  // [devMode
-  watchFolders: [rnwPath, rnwRootNodeModules, rnwPackages],
-  // devMode]
   resolver: {
     blockList: exclusionList([
       // This stops "react-native run-windows" from causing the metro server to crash if its already running
@@ -32,11 +24,6 @@ module.exports = {
       new RegExp(`${rnwPath}/target/.*`),
       /.*\.ProjectImports\.zip/,
     ]),
-    // [devMode
-    extraNodeModules: {
-      'react-native-windows': rnwPath,
-    },
-    // devMode]
   },
   transformer: {
     getTransformOptions: async () => ({
