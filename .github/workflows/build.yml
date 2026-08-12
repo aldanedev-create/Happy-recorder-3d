@@ -50,7 +50,7 @@ jobs:
       - name: Create release bundle
         shell: pwsh
         run: |
-          $env:CL = '/D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS'
+          $env:CL = '/D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS /Wv:18'
           msbuild $env:APP_PROJECT /restore /m /p:SolutionDir="$env:GITHUB_WORKSPACE\windows\" /p:WindowsTargetPlatformVersion=10.0 /p:Configuration=Release /p:Platform=x64 /p:AppxBundle=Always /p:AppxBundlePlatforms="x64" /p:UapAppxPackageBuildMode=StoreUpload /p:AppxPackageDir="$env:GITHUB_WORKSPACE\artifacts\"
       - name: Upload Windows package
         uses: actions/upload-artifact@v4
