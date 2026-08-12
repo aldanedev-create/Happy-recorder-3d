@@ -1,0 +1,51 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "commonjs",
+    "lib": ["ES2020", "DOM"],
+    "allowJs": true,
+    "jsx": "react-native",
+    "sourceMap": true,
+    "noEmit": true,
+    "strict": true,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "allowSyntheticDefaultImports": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"],
+      "@components/*": ["src/components/*"],
+      "@screens/*": ["src/screens/*"],
+      "@recording/*": ["src/recording/*"],
+      "@editor/*": ["src/editor/*"],
+      "@three/*": ["src/three/*"],
+      "@services/*": ["src/services/*"],
+      "@data/*": ["src/data/*"]
+    }
+  },
+  "include": [
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "tests/**/*.ts",
+    "tests/**/*.tsx",
+    "index.js",
+    "app.js",
+    "*.js"
+  ],
+  "exclude": [
+    "node_modules",
+    "windows",
+    "ios",
+    "android",
+    "**/*.spec.ts",
+    "**/*.test.ts"
+  ]
+}
