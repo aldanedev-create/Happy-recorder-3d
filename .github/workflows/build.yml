@@ -50,7 +50,7 @@ jobs:
       - name: Create release bundle
         shell: pwsh
         run: |
-          msbuild $env:APP_PROJECT /restore /m /p:Configuration=Release /p:Platform=x64 /p:AppxBundle=Always /p:AppxBundlePlatforms="x64" /p:UapAppxPackageBuildMode=StoreUpload /p:AppxPackageDir="$env:GITHUB_WORKSPACE\artifacts\"
+          msbuild $env:APP_PROJECT /restore /m /p:SolutionDir="$env:GITHUB_WORKSPACE\windows\" /p:Configuration=Release /p:Platform=x64 /p:AppxBundle=Always /p:AppxBundlePlatforms="x64" /p:UapAppxPackageBuildMode=StoreUpload /p:AppxPackageDir="$env:GITHUB_WORKSPACE\artifacts\"
       - name: Upload Windows package
         uses: actions/upload-artifact@v4
         with:
