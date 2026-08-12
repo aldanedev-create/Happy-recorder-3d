@@ -73,6 +73,24 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # IMPORTANT:
+      # Apply Windows native-module autolinking before MSBuild.
+      - name: Apply React Native Windows autolinking
+        shell: pwsh
+        run: |
+          npx react-native autolink-windows `
+            --sln "windows\HappyRecorder3D.sln" `
+            --proj "windows\HappyRecorder3D\HappyRecorder3D.vcxproj"
+
+      # Verify that autolinking is now clean.
+      - name: Verify React Native Windows autolinking
+        shell: pwsh
+        run: |
+          npx react-native autolink-windows `
+            --check `
+            --sln "windows\HappyRecorder3D.sln" `
+            --proj "windows\HappyRecorder3D\HappyRecorder3D.vcxproj"
+
       - name: Show Windows SDKs
         shell: pwsh
         run: |
