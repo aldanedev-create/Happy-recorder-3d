@@ -90,26 +90,78 @@ jobs:
             --sln "windows\HappyRecorder3D.sln" `
             --proj "windows\HappyRecorder3D\HappyRecorder3D.vcxproj"
 
-      # Restore the NuGet packages expected by the RN Windows modules.
+      # Restore every NuGet packages.config in the project,
+      # including packages belonging to native React Native modules.
       - name: Restore NuGet packages
         shell: pwsh
         run: |
-          nuget restore "windows\HappyRecorder3D.sln" `
-            -PackagesDirectory "$env:GITHUB_WORKSPACE\windows\packages"
+          $packagesDirectory = "$env:GITHUB_WORKSPACE\windows\packages"
 
-      # Verify the package that previously caused the build to fail.
-      - name: Verify CppWinRT package
+          New-Item -ItemType Directory -Force -Path $packagesDirectory | Out-Null
+
+          $packageConfigs = Get-ChildItem `
+            -Path "$env:GITHUB_WORKSPACE" `
+            -Recurse `
+            -Filter "packages.config" `
+            -File `
+            -ErrorAction SilentlyContinue
+
+          Write-Host "NuGet package configuration files found:"
+          $packageConfigs | ForEach-Object {
+            Write-Host $_.FullName
+          }
+
+          foreach ($config in $packageConfigs) {
+            Write-Host ""
+            Write-Host "Restoring packages from:"
+            Write-Host $config.FullName
+
+            nuget restore $config.FullName `
+              -PackagesDirectory $packagesDirectory `
+              -NonInteractive
+          }
+
+      # Verify all CppWinRT versions required by the project exist.
+      - name: Verify CppWinRT packages
         shell: pwsh
         run: |
-          $cppWinRT = "$env:GITHUB_WORKSPACE\windows\packages\Microsoft.Windows.CppWinRT.2.0.200316.3\build\native\Microsoft.Windows.CppWinRT.props"
+          $packagesDirectory = "$env:GITHUB_WORKSPACE\windows\packages"
 
-          if (!(Test-Path $cppWinRT)) {
-            Write-Error "Microsoft.Windows.CppWinRT.props was not restored."
+          $requiredVersions = @(
+            "2.0.200316.3",
+            "2.0.230706.1",
+            "2.0.240405.15"
+          )
+
+          foreach ($version in $requiredVersions) {
+            $props = Join-Path `
+              $packagesDirectory `
+              "Microsoft.Windows.CppWinRT.$version\build\native\Microsoft.Windows.CppWinRT.props"
+
+            if (Test-Path $props) {
+              Write-Host "FOUND: Microsoft.Windows.CppWinRT $version"
+            }
+            else {
+              Write-Host "NOT FOUND: Microsoft.Windows.CppWinRT $version"
+            }
+          }
+
+          $found = Get-ChildItem `
+            -Path $packagesDirectory `
+            -Directory `
+            -Filter "Microsoft.Windows.CppWinRT.*" `
+            -ErrorAction SilentlyContinue
+
+          Write-Host ""
+          Write-Host "Installed CppWinRT packages:"
+          $found | Select-Object -ExpandProperty FullName
+
+          if (-not $found) {
+            Write-Error "No Microsoft.Windows.CppWinRT package was restored."
             exit 1
           }
 
-          Write-Host "Microsoft.Windows.CppWinRT restored successfully."
-
+      # Show all Windows SDKs available on the runner.
       - name: Show Windows SDKs
         shell: pwsh
         run: |
@@ -159,6 +211,7 @@ jobs:
             /p:Platform=x64 `
             /p:WindowsTargetPlatformVersion=10.0.19041.0 `
             /p:TargetPlatformMinVersion=10.0.17763.0 `
+            /p:WindowsTargetPlatformMinVersion=10.0.17763.0 `
             /p:AppxBundle=Always `
             /p:AppxBundlePlatforms=x64 `
             /p:UapAppxPackageBuildMode=StoreUpload `
