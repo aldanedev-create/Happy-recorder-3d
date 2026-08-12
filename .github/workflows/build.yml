@@ -18,7 +18,7 @@ permissions:
 
 env:
   NODE_VERSION: '18'
-  APP_PROJECT: windows/HappyRecorder3D/HappyRecorder3D.vcxproj
+  APP_PROJECT: windows/HappyRecorder3D.sln
 
 jobs:
   test:
@@ -61,8 +61,7 @@ jobs:
       - name: Create release bundle
         shell: pwsh
         run: |
-          msbuild $env:APP_PROJECT /restore /m /p:Configuration=Release /p:Platform=x64 /p:AppxBundle=Always /p:AppxBundlePlatforms="x64" /p:UapAppxPackageBuildMode=StoreUpload /p:AppxPackageDir="$env:GITHUB_WORKSPACE\artifacts\" -flp:logfile=msbuild.log;verbosity=diagnostic
-
+          msbuild $env:APP_PROJECT /restore /m /p:Configuration=Release /p:Platform=x64 /p:AppxBundle=Always /p:AppxBundlePlatforms="x64" /p:UapAppxPackageBuildMode=StoreUpload /p:AppxPackageDir="$env:GITHUB_WORKSPACE\artifacts\" "-flp:logfile=msbuild.log;verbosity=diagnostic"
       - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4
