@@ -57,7 +57,7 @@ jobs:
 
       - name: Install Windows 10 SDK 10.0.19041.0
         run: |
-           choco install winsdk-10.0.19041 -y
+           choco install windows-sdk-10-version-2004-all -y
 
       - name: Pre-bundle check (surfaces the real Metro/Babel error, if any)
         run: npx react-native bundle --platform windows --dev false --entry-file index.js --bundle-output ci-bundle-test/index.windows.bundle --assets-dest ci-bundle-test --verbose
