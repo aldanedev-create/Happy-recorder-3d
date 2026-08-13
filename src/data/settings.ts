@@ -104,6 +104,11 @@ export interface PrivacySettings {
   consentGiven: boolean;
 }
 
+export interface PerformanceSettings {
+  hardwareAcceleration: boolean;
+  maxMemoryUsage: 'low' | 'medium' | 'high';
+}
+
 export interface UISettings {
   theme: ThemeSettings;
   language: string;
@@ -128,6 +133,7 @@ export interface AppSettings {
   export: ExportSettings;
   storage: StorageSettings;
   privacy: PrivacySettings;
+  performance: PerformanceSettings;
   ui: UISettings;
   isFirstLaunch: boolean;
   lastVersion: string;
@@ -243,6 +249,11 @@ export const DEFAULT_PRIVACY: PrivacySettings = {
   consentGiven: false,
 };
 
+export const DEFAULT_PERFORMANCE: PerformanceSettings = {
+  hardwareAcceleration: true,
+  maxMemoryUsage: 'medium',
+};
+
 export const DEFAULT_UI: UISettings = {
   theme: DEFAULT_THEME,
   language: 'en',
@@ -267,6 +278,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   export: DEFAULT_EXPORT,
   storage: DEFAULT_STORAGE,
   privacy: DEFAULT_PRIVACY,
+  performance: DEFAULT_PERFORMANCE,
   ui: DEFAULT_UI,
   isFirstLaunch: true,
   lastVersion: '0.0.0',

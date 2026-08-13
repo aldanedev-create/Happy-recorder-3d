@@ -51,6 +51,25 @@ jest.mock('../src/services/storage', () => ({
     deleteProject: jest.fn().mockResolvedValue(undefined),
     saveCodeSnapshot: jest.fn().mockResolvedValue(undefined),
     loadCodeSnapshots: jest.fn().mockResolvedValue([]),
+    saveSettings: jest.fn().mockResolvedValue(undefined),
+    loadSettings: jest.fn().mockResolvedValue({
+      version: '0.1.0',
+      lastUpdated: new Date(),
+      theme: { mode: 'dark', primaryColor: '#6c63ff', accentColor: '#ff6b6b', backgroundColor: '#0a0a1a', textColor: '#ffffff', cardBackground: 'rgba(255,255,255,0.08)', cardBorder: 'rgba(255,255,255,0.05)', shadowColor: 'rgba(0,0,0,0.3)', borderRadius: 12, fontFamily: 'Segoe UI, sans-serif' },
+      hotkeys: { startRecording: 'Ctrl+R', stopRecording: 'Ctrl+Shift+R', pauseRecording: 'Ctrl+P', takeSnapshot: 'Ctrl+S', toggleCamera: 'Ctrl+C', toggleMicrophone: 'Ctrl+M', toggleSystemAudio: 'Ctrl+A', saveProject: 'Ctrl+S', undo: 'Ctrl+Z', redo: 'Ctrl+Shift+Z', playPause: 'Space', exportVideo: 'Ctrl+E', navigateHome: 'Ctrl+1', navigateRecord: 'Ctrl+2', navigateEditor: 'Ctrl+3', navigateRecordings: 'Ctrl+4', navigateTutorials: 'Ctrl+5', navigateSettings: 'Ctrl+6' },
+      recording: { defaultMode: 'normal', defaultQuality: '1080p', defaultFps: 60, countdownDuration: 3, showCursor: true, highlightClicks: true, showHotkeys: true, cursorColor: '#ff6b6b', cursorSize: 24, clickColor: '#ffd93d', clickDuration: 300, cameraEnabled: true, cameraPosition: 'bottom-right', cameraShape: 'rounded', cameraBorder: true, cameraBorderColor: '#6c63ff', cameraSize: { width: 240, height: 180 } },
+      audio: { microphoneDevice: 'default', microphoneVolume: 80, microphoneNoiseReduction: true, microphoneEchoCancellation: true, systemAudioDevice: 'default', systemAudioVolume: 100, systemAudioEnabled: true, musicVolume: 25, musicFadeIn: 0, musicFadeOut: 0, audioBitrate: 128000, audioChannels: 2, audioSampleRate: 48000 },
+      export: { format: 'mp4', codec: 'h264', quality: 'high', bitrate: 2000000, resolution: { width: 1920, height: 1080 }, fps: 60, exportPath: '', autoOpen: true, includeMetadata: true, includeGitInfo: true, includeSnapshots: true },
+      storage: { recordingsPath: '', projectsPath: '', exportsPath: '', snapshotsPath: '', cachePath: '', maxStorageSize: 10 * 1024 * 1024 * 1024, autoCleanup: true, cleanupAfterDays: 30, compressExports: false },
+      privacy: { analyticsEnabled: false, crashReportsEnabled: true, usageDataEnabled: false, errorReportingEnabled: true, autoUpdateCheck: true, sendAnonymousStats: false, consentGiven: false },
+      performance: { hardwareAcceleration: true, maxMemoryUsage: 'medium' },
+      ui: { theme: { mode: 'dark', primaryColor: '#6c63ff', accentColor: '#ff6b6b', backgroundColor: '#0a0a1a', textColor: '#ffffff', cardBackground: 'rgba(255,255,255,0.08)', cardBorder: 'rgba(255,255,255,0.05)', shadowColor: 'rgba(0,0,0,0.3)', borderRadius: 12, fontFamily: 'Segoe UI, sans-serif' }, language: 'en', showTutorialsOnStart: true, recentRecordingsCount: 5, showNotificationBadges: true, compactMode: false, animationsEnabled: true, animationSpeed: 'normal', threeDBackgroundEnabled: true, threeDParticleCount: 200, threeDShapesEnabled: true },
+      isFirstLaunch: true,
+      lastVersion: '0.0.0',
+    }),
+    resetSettings: jest.fn().mockResolvedValue(undefined),
+    saveTutorialProgress: jest.fn().mockResolvedValue(undefined),
+    loadTutorialProgress: jest.fn().mockResolvedValue([]),
   },
 }));
 
@@ -275,43 +294,43 @@ describe('Recordings Screen Tests', () => {
 });
 
 describe('Tutorials Screen Tests', () => {
-  test('renders progress section', () => {
-    const { getByText } = render(<Tutorials />);
-    expect(getByText(/📚 Tutorial Progress/i)).toBeTruthy();
+  test('renders progress section', async () => {
+    const { findByText } = render(<Tutorials />);
+    expect(await findByText(/📚 Tutorial Progress/i)).toBeTruthy();
   });
 
-  test('renders tutorial list', () => {
-    const { getByText } = render(<Tutorials />);
-    expect(getByText(/Getting Started/i)).toBeTruthy();
-    expect(getByText(/Record Your Screen/i)).toBeTruthy();
-    expect(getByText(/Edit a Recording/i)).toBeTruthy();
+  test('renders tutorial list', async () => {
+    const { findByText } = render(<Tutorials />);
+    expect(await findByText(/Getting Started/i)).toBeTruthy();
+    expect(await findByText(/Record Your Screen/i)).toBeTruthy();
+    expect(await findByText(/Edit a Recording/i)).toBeTruthy();
   });
 
-  test('renders quick actions', () => {
-    const { getByText } = render(<Tutorials />);
-    expect(getByText(/Start Recording/i)).toBeTruthy();
-    expect(getByText(/View Recordings/i)).toBeTruthy();
+  test('renders quick actions', async () => {
+    const { findByText } = render(<Tutorials />);
+    expect(await findByText(/Start Recording/i)).toBeTruthy();
+    expect(await findByText(/View Recordings/i)).toBeTruthy();
   });
 });
 
 describe('Settings Screen Tests', () => {
-  test('renders settings sections', () => {
-    const { getByText } = render(<Settings />);
-    expect(getByText(/⚙️ General/i)).toBeTruthy();
-    expect(getByText(/🎥 Recording/i)).toBeTruthy();
-    expect(getByText(/🎙 Audio/i)).toBeTruthy();
-    expect(getByText(/📤 Export/i)).toBeTruthy();
-    expect(getByText(/⚡ Performance/i)).toBeTruthy();
-    expect(getByText(/🔒 Privacy/i)).toBeTruthy();
+  test('renders settings sections', async () => {
+    const { findByText } = render(<Settings />);
+    expect(await findByText(/⚙️ General/i)).toBeTruthy();
+    expect(await findByText(/🎥 Recording/i)).toBeTruthy();
+    expect(await findByText(/🎙 Audio/i)).toBeTruthy();
+    expect(await findByText(/📤 Export/i)).toBeTruthy();
+    expect(await findByText(/⚡ Performance/i)).toBeTruthy();
+    expect(await findByText(/🔒 Privacy/i)).toBeTruthy();
   });
 
-  test('toggles sections when clicked', () => {
-    const { getByText, queryByText } = render(<Settings />);
-    
-    // Click on General section
-    const generalHeader = getByText(/⚙️ General/i);
+  test('toggles sections when clicked', async () => {
+    const { findByText, getByText } = render(<Settings />);
+
+    // Wait for the async settings load to finish before interacting
+    const generalHeader = await findByText(/⚙️ General/i);
     fireEvent.press(generalHeader);
-    
+
     // Should show General settings
     expect(getByText(/Theme/i)).toBeTruthy();
     expect(getByText(/Language/i)).toBeTruthy();

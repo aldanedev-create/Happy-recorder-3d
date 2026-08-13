@@ -1,5 +1,6 @@
 import * as RNFS from 'react-native-fs';
 import { Platform } from 'react-native';
+import { AppSettings, DEFAULT_SETTINGS } from '../data/settings';
 
 export interface StorageConfig {
   appName: string;
@@ -563,6 +564,125 @@ class StorageService {
     } catch (error) {
       console.error('Failed to get file size:', error);
       return 0;
+    }
+  }
+
+  /**
+   * Get settings file path (lives next to Recordings/Projects/etc,
+   * one level up in the app data folder rather than inside a subfolder)
+   */
+  private getSettingsFilePath(): string {
+    // config.recordingsPath is "<basePath>/HappyRecorder3D/Recordings",
+    // so strip the last segment to get back to the app root.
+    const appRoot = this.config.recordingsPath.replace(/\/Recordings$/, '');
+    return `${appRoot}/settings.json`;
+  }
+
+  /**
+   * Save app settings to disk
+   */
+  async saveSettings(settings: AppSettings): Promise<void> {
+    try {
+      const filePath = this.getSettingsFilePath();
+      const data = JSON.stringify(
+        { ...settings, lastUpdated: new Date().toISOString() },
+        null,
+        2
+      );
+      await RNFS.writeFile(filePath, data, 'utf8');
+      console.log('💾 Settings saved to disk');
+    } catch (error) {
+      console.error('Failed to save settings:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Load app settings from disk. Falls back to DEFAULT_SETTINGS if
+   * no settings file exists yet (first launch) or it can't be read.
+   */
+  async loadSettings(): Promise<AppSettings> {
+    try {
+      const filePath = this.getSettingsFilePath();
+      const exists = await RNFS.exists(filePath);
+      if (!exists) return DEFAULT_SETTINGS;
+
+      const data = await RNFS.readFile(filePath, 'utf8');
+      const parsed = JSON.parse(data);
+
+      if (parsed.lastUpdated) {
+        parsed.lastUpdated = new Date(parsed.lastUpdated);
+      }
+
+      // Merge over defaults so newly-added fields (e.g. a future
+      // settings.performance) are present even for settings files
+      // saved before that field existed.
+      return {
+        ...DEFAULT_SETTINGS,
+        ...parsed,
+        theme: { ...DEFAULT_SETTINGS.theme, ...parsed.theme },
+        hotkeys: { ...DEFAULT_SETTINGS.hotkeys, ...parsed.hotkeys },
+        recording: { ...DEFAULT_SETTINGS.recording, ...parsed.recording },
+        audio: { ...DEFAULT_SETTINGS.audio, ...parsed.audio },
+        export: { ...DEFAULT_SETTINGS.export, ...parsed.export },
+        storage: { ...DEFAULT_SETTINGS.storage, ...parsed.storage },
+        privacy: { ...DEFAULT_SETTINGS.privacy, ...parsed.privacy },
+        performance: { ...DEFAULT_SETTINGS.performance, ...parsed.performance },
+        ui: { ...DEFAULT_SETTINGS.ui, ...parsed.ui },
+      };
+    } catch (error) {
+      console.error('Failed to load settings, using defaults:', error);
+      return DEFAULT_SETTINGS;
+    }
+  }
+
+  /**
+   * Reset settings file back to defaults on disk
+   */
+  async resetSettings(): Promise<void> {
+    await this.saveSettings(DEFAULT_SETTINGS);
+  }
+
+  /**
+   * Get tutorial progress file path (next to settings.json)
+   */
+  private getTutorialProgressFilePath(): string {
+    const appRoot = this.config.recordingsPath.replace(/\/Recordings$/, '');
+    return `${appRoot}/tutorial-progress.json`;
+  }
+
+  /**
+   * Save which tutorial IDs are completed. We only persist the IDs
+   * (not the full Tutorial objects) so the source-of-truth content in
+   * data/tutorials.ts can keep changing without stale copies drifting
+   * out of sync on disk.
+   */
+  async saveTutorialProgress(completedIds: string[]): Promise<void> {
+    try {
+      const filePath = this.getTutorialProgressFilePath();
+      await RNFS.writeFile(filePath, JSON.stringify({ completedIds }, null, 2), 'utf8');
+    } catch (error) {
+      console.error('Failed to save tutorial progress:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Load which tutorial IDs are completed. Returns an empty array if
+   * no progress file exists yet (first launch) or it can't be read.
+   */
+  async loadTutorialProgress(): Promise<string[]> {
+    try {
+      const filePath = this.getTutorialProgressFilePath();
+      const exists = await RNFS.exists(filePath);
+      if (!exists) return [];
+
+      const data = await RNFS.readFile(filePath, 'utf8');
+      const parsed = JSON.parse(data);
+      return Array.isArray(parsed.completedIds) ? parsed.completedIds : [];
+    } catch (error) {
+      console.error('Failed to load tutorial progress:', error);
+      return [];
     }
   }
 }

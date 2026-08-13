@@ -1,10 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
   StyleSheet,
   ScrollView,
   TouchableOpacity,
+  ActivityIndicator,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -12,88 +13,45 @@ import type { RootStackParamList } from '../App';
 
 import Card from '../components/Card';
 import Button from '../components/Button';
+import { storageService } from '../services/storage';
+
+// Wired to the shared data file instead of a local hardcoded copy.
+// This gives us all 12 tutorials (not just 7), the full step-by-step
+// content, categories, and prerequisites for free.
+import { TUTORIALS, Tutorial } from '../data/tutorials';
 
 type TutorialsScreenNavigationProp = NativeStackNavigationProp<RootStackParamList, 'Tutorials'>;
 
-interface Tutorial {
-  id: string;
-  title: string;
-  description: string;
-  icon: string;
-  duration: string;
-  level: 'beginner' | 'intermediate' | 'advanced';
-  completed: boolean;
-}
-
 const Tutorials: React.FC = () => {
   const navigation = useNavigation<TutorialsScreenNavigationProp>();
-  const [tutorials, setTutorials] = useState<Tutorial[]>([
-    {
-      id: '1',
-      title: 'Getting Started',
-      description: 'Learn the basics of Happy Recorder 3D',
-      icon: '🚀',
-      duration: '2:30',
-      level: 'beginner',
-      completed: false,
-    },
-    {
-      id: '2',
-      title: 'Record Your Screen',
-      description: 'How to capture your screen with different modes',
-      icon: '🎥',
-      duration: '3:15',
-      level: 'beginner',
-      completed: false,
-    },
-    {
-      id: '3',
-      title: 'Record Your Camera',
-      description: 'Add camera overlay to your recordings',
-      icon: '📷',
-      duration: '4:00',
-      level: 'beginner',
-      completed: true,
-    },
-    {
-      id: '4',
-      title: 'Edit a Recording',
-      description: 'Trim, cut, and enhance your videos',
-      icon: '✂️',
-      duration: '5:20',
-      level: 'intermediate',
-      completed: false,
-    },
-    {
-      id: '5',
-      title: 'Add Background Music',
-      description: 'Import and edit music for your recordings',
-      icon: '🎵',
-      duration: '3:45',
-      level: 'intermediate',
-      completed: false,
-    },
-    {
-      id: '6',
-      title: 'Add 3D Elements',
-      description: 'Incorporate 3D objects into your videos',
-      icon: '🧊',
-      duration: '6:10',
-      level: 'advanced',
-      completed: false,
-    },
-    {
-      id: '7',
-      title: 'Export Your Video',
-      description: 'Export recordings in different formats',
-      icon: '📤',
-      duration: '2:50',
-      level: 'beginner',
-      completed: false,
-    },
-  ]);
 
+  // Seed from the shared data file, then apply any persisted
+  // completion state once it loads (see useEffect below).
+  const [tutorials, setTutorials] = useState<Tutorial[]>(TUTORIALS);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let mounted = true;
+    storageService
+      .loadTutorialProgress()
+      .then((completedIds) => {
+        if (!mounted) return;
+        const completedSet = new Set(completedIds);
+        setTutorials(
+          TUTORIALS.map((t) => ({
+            ...t,
+            completed: completedSet.has(t.id) || t.completed,
+          }))
+        );
+      })
+      .finally(() => {
+        if (mounted) setLoading(false);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const getLevelColor = (level: string) => {
     switch (level) {
@@ -119,12 +77,15 @@ const Tutorials: React.FC = () => {
 
   const handleStartTutorial = (tutorial: Tutorial) => {
     console.log(`▶️ Starting tutorial: ${tutorial.title}`);
-    // Mark as completed
-    setTutorials(
-      tutorials.map((t) =>
-        t.id === tutorial.id ? { ...t, completed: true } : t
-      )
+    const updated = tutorials.map((t) =>
+      t.id === tutorial.id ? { ...t, completed: true } : t
     );
+    setTutorials(updated);
+
+    const completedIds = updated.filter((t) => t.completed).map((t) => t.id);
+    storageService.saveTutorialProgress(completedIds).catch((error) => {
+      console.error('Failed to save tutorial progress:', error);
+    });
   };
 
   const renderTutorial = (tutorial: Tutorial) => {
@@ -159,6 +120,38 @@ const Tutorials: React.FC = () => {
         {isExpanded && (
           <View style={styles.tutorialBody}>
             <Text style={styles.tutorialDescription}>{tutorial.description}</Text>
+
+            {tutorial.prerequisites && tutorial.prerequisites.length > 0 && (
+              <Text style={styles.prereqText}>
+                Requires: {tutorial.prerequisites.join(', ')}
+              </Text>
+            )}
+
+            {/* Step-by-step breakdown — this data existed in data/tutorials.ts
+                but the old screen never rendered it. */}
+            <View style={styles.stepsList}>
+              {tutorial.steps.map((step, index) => (
+                <View key={step.id} style={styles.stepRow}>
+                  <Text style={styles.stepNumber}>{index + 1}</Text>
+                  <View style={styles.stepTextContainer}>
+                    <View style={styles.stepTitleRow}>
+                      <Text style={styles.stepTitle}>{step.title}</Text>
+                      {step.duration && (
+                        <Text style={styles.stepDuration}>{step.duration}</Text>
+                      )}
+                    </View>
+                    <Text style={styles.stepDescription}>{step.description}</Text>
+                  </View>
+                </View>
+              ))}
+            </View>
+
+            <View style={styles.tagRow}>
+              {tutorial.tags.map((tag) => (
+                <Text key={tag} style={styles.tagChip}>#{tag}</Text>
+              ))}
+            </View>
+
             <View style={styles.tutorialActions}>
               <Button
                 title={tutorial.completed ? '🔄 Replay' : '▶️ Start Tutorial'}
@@ -176,7 +169,16 @@ const Tutorials: React.FC = () => {
 
   const completedCount = tutorials.filter((t) => t.completed).length;
   const totalCount = tutorials.length;
-  const progress = (completedCount / totalCount) * 100;
+  const progress = totalCount > 0 ? (completedCount / totalCount) * 100 : 0;
+
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#6c63ff" />
+        <Text style={styles.loadingText}>Loading tutorials…</Text>
+      </View>
+    );
+  }
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
@@ -228,6 +230,16 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: 'transparent',
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    color: '#a8a8b8',
+    marginTop: 12,
+    fontSize: 14,
   },
   content: {
     padding: 16,
@@ -348,8 +360,65 @@ const styles = StyleSheet.create({
   tutorialDescription: {
     fontSize: 14,
     color: '#a8a8b8',
-    marginBottom: 12,
+    marginBottom: 8,
     lineHeight: 20,
+  },
+  prereqText: {
+    fontSize: 12,
+    color: '#ff9800',
+    marginBottom: 12,
+  },
+  stepsList: {
+    marginBottom: 12,
+  },
+  stepRow: {
+    flexDirection: 'row',
+    marginBottom: 10,
+  },
+  stepNumber: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: 'rgba(108, 99, 255, 0.3)',
+    color: '#ffffff',
+    fontSize: 11,
+    textAlign: 'center',
+    lineHeight: 20,
+    marginRight: 10,
+    overflow: 'hidden',
+  },
+  stepTextContainer: {
+    flex: 1,
+  },
+  stepTitleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  stepTitle: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#ffffff',
+  },
+  stepDuration: {
+    fontSize: 11,
+    color: '#a8a8b8',
+  },
+  stepDescription: {
+    fontSize: 12,
+    color: '#a8a8b8',
+    marginTop: 2,
+    lineHeight: 17,
+  },
+  tagRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginBottom: 12,
+  },
+  tagChip: {
+    fontSize: 11,
+    color: '#6c63ff',
+    marginRight: 8,
+    marginBottom: 4,
   },
   tutorialActions: {
     flexDirection: 'row',

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   Switch,
   TextInput,
+  ActivityIndicator,
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
@@ -14,74 +15,74 @@ import type { RootStackParamList } from '../App';
 
 import Card from '../components/Card';
 import Button from '../components/Button';
+import { storageService } from '../services/storage';
+
+// Wired to the shared data file instead of a flat local duplicate.
+import {
+  AppSettings,
+  DEFAULT_SETTINGS,
+  validateSettings,
+} from '../data/settings';
 
 type SettingsScreenNavigationProp = NativeStackNavigationProp<RootStackParamList, 'Settings'>;
 
-interface SettingsState {
-  // General
-  theme: 'light' | 'dark' | 'system';
-  language: string;
-  autoSave: boolean;
-  autoSavePath: string;
-  
-  // Recording
-  defaultQuality: '720p' | '1080p' | '4K';
-  defaultFps: 30 | 60 | 120;
-  showCursor: boolean;
-  highlightClicks: boolean;
-  showHotkeys: boolean;
-  
-  // Audio
-  microphoneDevice: string;
-  microphoneVolume: number;
-  systemAudio: boolean;
-  systemAudioDevice: string;
-  
-  // Export
-  exportFormat: 'mp4' | 'mov' | 'avi';
-  exportQuality: 'high' | 'medium' | 'low';
-  exportPath: string;
-  
-  // Performance
-  hardwareAcceleration: boolean;
-  maxMemoryUsage: 'low' | 'medium' | 'high';
-  
-  // Privacy
-  analyticsOptIn: boolean;
-  crashReports: boolean;
-}
-
 const Settings: React.FC = () => {
   const navigation = useNavigation<SettingsScreenNavigationProp>();
-  
-  const [settings, setSettings] = useState<SettingsState>({
-    theme: 'dark',
-    language: 'English',
-    autoSave: true,
-    autoSavePath: '~/Documents/HappyRecorder/Recordings',
-    defaultQuality: '1080p',
-    defaultFps: 60,
-    showCursor: true,
-    highlightClicks: true,
-    showHotkeys: true,
-    microphoneDevice: 'Default Microphone',
-    microphoneVolume: 80,
-    systemAudio: true,
-    systemAudioDevice: 'Default System Audio',
-    exportFormat: 'mp4',
-    exportQuality: 'high',
-    exportPath: '~/Documents/HappyRecorder/Exports',
-    hardwareAcceleration: true,
-    maxMemoryUsage: 'medium',
-    analyticsOptIn: false,
-    crashReports: true,
-  });
 
+  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [activeSection, setActiveSection] = useState<string | null>(null);
+  const [errors, setErrors] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saved'>('idle');
+
+  useEffect(() => {
+    let mounted = true;
+    storageService
+      .loadSettings()
+      .then((loaded) => {
+        if (mounted) setSettings(loaded);
+      })
+      .finally(() => {
+        if (mounted) setLoading(false);
+      });
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   const toggleSection = (section: string) => {
     setActiveSection(activeSection === section ? null : section);
   };
+
+  // Small typed helpers for updating nested slices without repeating
+  // { ...settings, x: { ...settings.x, y: value } } everywhere.
+  const updateTheme = (patch: Partial<AppSettings['theme']>) =>
+    setSettings({ ...settings, theme: { ...settings.theme, ...patch } });
+
+  const updateUI = (patch: Partial<AppSettings['ui']>) =>
+    setSettings({ ...settings, ui: { ...settings.ui, ...patch } });
+
+  const updateRecording = (patch: Partial<AppSettings['recording']>) =>
+    setSettings({ ...settings, recording: { ...settings.recording, ...patch } });
+
+  const updateAudio = (patch: Partial<AppSettings['audio']>) =>
+    setSettings({ ...settings, audio: { ...settings.audio, ...patch } });
+
+  const updateExport = (patch: Partial<AppSettings['export']>) =>
+    setSettings({ ...settings, export: { ...settings.export, ...patch } });
+
+  const updateStorage = (patch: Partial<AppSettings['storage']>) =>
+    setSettings({ ...settings, storage: { ...settings.storage, ...patch } });
+
+  const updatePrivacy = (patch: Partial<AppSettings['privacy']>) =>
+    setSettings({ ...settings, privacy: { ...settings.privacy, ...patch } });
+
+  // Requires the PerformanceSettings patch from data/settings.patch.ts.
+  // If you haven't applied it yet, this line (and the section below)
+  // will error — apply the patch first, or delete the Performance
+  // section below until you do.
+  const updatePerformance = (patch: Partial<AppSettings['performance']>) =>
+    setSettings({ ...settings, performance: { ...settings.performance, ...patch } });
 
   const renderGeneralSettings = () => (
     <Card style={styles.sectionCard}>
@@ -92,56 +93,56 @@ const Settings: React.FC = () => {
         <Text style={styles.sectionTitle}>⚙️ General</Text>
         <Text style={styles.sectionIcon}>{activeSection === 'general' ? '▼' : '▶'}</Text>
       </TouchableOpacity>
-      
+
       {activeSection === 'general' && (
         <View style={styles.sectionContent}>
           <View style={styles.settingRow}>
             <Text style={styles.settingLabel}>Theme</Text>
             <View style={styles.themeButtons}>
-              {['light', 'dark', 'system'].map((theme) => (
+              {(['light', 'dark', 'system'] as const).map((mode) => (
                 <TouchableOpacity
-                  key={theme}
+                  key={mode}
                   style={[
                     styles.themeButton,
-                    settings.theme === theme && styles.themeButtonActive,
+                    settings.theme.mode === mode && styles.themeButtonActive,
                   ]}
-                  onPress={() => setSettings({ ...settings, theme: theme as any })}
+                  onPress={() => updateTheme({ mode })}
                 >
                   <Text style={styles.themeButtonText}>
-                    {theme.charAt(0).toUpperCase() + theme.slice(1)}
+                    {mode.charAt(0).toUpperCase() + mode.slice(1)}
                   </Text>
                 </TouchableOpacity>
               ))}
             </View>
           </View>
-          
+
           <View style={styles.settingRow}>
             <Text style={styles.settingLabel}>Language</Text>
             <TextInput
               style={styles.input}
-              value={settings.language}
-              onChangeText={(text) => setSettings({ ...settings, language: text })}
+              value={settings.ui.language}
+              onChangeText={(text) => updateUI({ language: text })}
               placeholder="Language"
               placeholderTextColor="#666"
             />
           </View>
-          
+
           <View style={styles.settingRow}>
-            <Text style={styles.settingLabel}>Auto Save</Text>
+            <Text style={styles.settingLabel}>Auto Cleanup</Text>
             <Switch
-              value={settings.autoSave}
-              onValueChange={(value) => setSettings({ ...settings, autoSave: value })}
+              value={settings.storage.autoCleanup}
+              onValueChange={(value) => updateStorage({ autoCleanup: value })}
             />
           </View>
-          
-          {settings.autoSave && (
+
+          {settings.storage.autoCleanup && (
             <View style={styles.settingRow}>
-              <Text style={styles.settingLabel}>Save Path</Text>
+              <Text style={styles.settingLabel}>Recordings Path</Text>
               <TextInput
                 style={styles.input}
-                value={settings.autoSavePath}
-                onChangeText={(text) => setSettings({ ...settings, autoSavePath: text })}
-                placeholder="Save path"
+                value={settings.storage.recordingsPath}
+                onChangeText={(text) => updateStorage({ recordingsPath: text })}
+                placeholder="Recordings path"
                 placeholderTextColor="#666"
               />
             </View>
@@ -160,66 +161,66 @@ const Settings: React.FC = () => {
         <Text style={styles.sectionTitle}>🎥 Recording</Text>
         <Text style={styles.sectionIcon}>{activeSection === 'recording' ? '▼' : '▶'}</Text>
       </TouchableOpacity>
-      
+
       {activeSection === 'recording' && (
         <View style={styles.sectionContent}>
           <View style={styles.settingRow}>
             <Text style={styles.settingLabel}>Default Quality</Text>
             <View style={styles.qualityButtons}>
-              {['720p', '1080p', '4K'].map((quality) => (
+              {(['720p', '1080p', '4K'] as const).map((quality) => (
                 <TouchableOpacity
                   key={quality}
                   style={[
                     styles.qualityButton,
-                    settings.defaultQuality === quality && styles.qualityButtonActive,
+                    settings.recording.defaultQuality === quality && styles.qualityButtonActive,
                   ]}
-                  onPress={() => setSettings({ ...settings, defaultQuality: quality as any })}
+                  onPress={() => updateRecording({ defaultQuality: quality })}
                 >
                   <Text style={styles.qualityButtonText}>{quality}</Text>
                 </TouchableOpacity>
               ))}
             </View>
           </View>
-          
+
           <View style={styles.settingRow}>
             <Text style={styles.settingLabel}>Default FPS</Text>
             <View style={styles.fpsButtons}>
-              {[30, 60, 120].map((fps) => (
+              {([30, 60, 120] as const).map((fps) => (
                 <TouchableOpacity
                   key={fps}
                   style={[
                     styles.fpsButton,
-                    settings.defaultFps === fps && styles.fpsButtonActive,
+                    settings.recording.defaultFps === fps && styles.fpsButtonActive,
                   ]}
-                  onPress={() => setSettings({ ...settings, defaultFps: fps as any })}
+                  onPress={() => updateRecording({ defaultFps: fps })}
                 >
                   <Text style={styles.fpsButtonText}>{fps}</Text>
                 </TouchableOpacity>
               ))}
             </View>
           </View>
-          
+
           <View style={styles.settingRow}>
             <Text style={styles.settingLabel}>Show Cursor</Text>
             <Switch
-              value={settings.showCursor}
-              onValueChange={(value) => setSettings({ ...settings, showCursor: value })}
+              value={settings.recording.showCursor}
+              onValueChange={(value) => updateRecording({ showCursor: value })}
             />
           </View>
-          
+
           <View style={styles.settingRow}>
             <Text style={styles.settingLabel}>Highlight Clicks</Text>
             <Switch
-              value={settings.highlightClicks}
-              onValueChange={(value) => setSettings({ ...settings, highlightClicks: value })}
+              value={settings.recording.highlightClicks}
+              onValueChange={(value) => updateRecording({ highlightClicks: value })}
             />
           </View>
-          
+
           <View style={styles.settingRow}>
             <Text style={styles.settingLabel}>Show Hotkeys</Text>
             <Switch
-              value={settings.showHotkeys}
-              onValueChange={(value) => setSettings({ ...settings, showHotkeys: value })}
+              value={settings.recording.showHotkeys}
+              onValueChange={(value) => updateRecording({ showHotkeys: value })}
             />
           </View>
         </View>
@@ -236,45 +237,45 @@ const Settings: React.FC = () => {
         <Text style={styles.sectionTitle}>🎙 Audio</Text>
         <Text style={styles.sectionIcon}>{activeSection === 'audio' ? '▼' : '▶'}</Text>
       </TouchableOpacity>
-      
+
       {activeSection === 'audio' && (
         <View style={styles.sectionContent}>
           <View style={styles.settingRow}>
             <Text style={styles.settingLabel}>Microphone</Text>
             <TextInput
               style={styles.input}
-              value={settings.microphoneDevice}
-              onChangeText={(text) => setSettings({ ...settings, microphoneDevice: text })}
+              value={settings.audio.microphoneDevice}
+              onChangeText={(text) => updateAudio({ microphoneDevice: text })}
               placeholder="Microphone device"
               placeholderTextColor="#666"
             />
           </View>
-          
+
           <View style={styles.settingRow}>
             <Text style={styles.settingLabel}>Microphone Volume</Text>
             <View style={styles.volumeContainer}>
-              <Text style={styles.volumeValue}>{settings.microphoneVolume}%</Text>
+              <Text style={styles.volumeValue}>{settings.audio.microphoneVolume}%</Text>
               <View style={styles.volumeBar}>
-                <View style={[styles.volumeFill, { width: `${settings.microphoneVolume}%` }]} />
+                <View style={[styles.volumeFill, { width: `${settings.audio.microphoneVolume}%` }]} />
               </View>
             </View>
           </View>
-          
+
           <View style={styles.settingRow}>
             <Text style={styles.settingLabel}>System Audio</Text>
             <Switch
-              value={settings.systemAudio}
-              onValueChange={(value) => setSettings({ ...settings, systemAudio: value })}
+              value={settings.audio.systemAudioEnabled}
+              onValueChange={(value) => updateAudio({ systemAudioEnabled: value })}
             />
           </View>
-          
-          {settings.systemAudio && (
+
+          {settings.audio.systemAudioEnabled && (
             <View style={styles.settingRow}>
               <Text style={styles.settingLabel}>System Audio Device</Text>
               <TextInput
                 style={styles.input}
-                value={settings.systemAudioDevice}
-                onChangeText={(text) => setSettings({ ...settings, systemAudioDevice: text })}
+                value={settings.audio.systemAudioDevice}
+                onChangeText={(text) => updateAudio({ systemAudioDevice: text })}
                 placeholder="System audio device"
                 placeholderTextColor="#666"
               />
@@ -294,38 +295,38 @@ const Settings: React.FC = () => {
         <Text style={styles.sectionTitle}>📤 Export</Text>
         <Text style={styles.sectionIcon}>{activeSection === 'export' ? '▼' : '▶'}</Text>
       </TouchableOpacity>
-      
+
       {activeSection === 'export' && (
         <View style={styles.sectionContent}>
           <View style={styles.settingRow}>
             <Text style={styles.settingLabel}>Format</Text>
             <View style={styles.formatButtons}>
-              {['mp4', 'mov', 'avi'].map((format) => (
+              {(['mp4', 'mov', 'avi'] as const).map((format) => (
                 <TouchableOpacity
                   key={format}
                   style={[
                     styles.formatButton,
-                    settings.exportFormat === format && styles.formatButtonActive,
+                    settings.export.format === format && styles.formatButtonActive,
                   ]}
-                  onPress={() => setSettings({ ...settings, exportFormat: format as any })}
+                  onPress={() => updateExport({ format })}
                 >
                   <Text style={styles.formatButtonText}>{format.toUpperCase()}</Text>
                 </TouchableOpacity>
               ))}
             </View>
           </View>
-          
+
           <View style={styles.settingRow}>
             <Text style={styles.settingLabel}>Quality</Text>
             <View style={styles.exportQualityButtons}>
-              {['high', 'medium', 'low'].map((quality) => (
+              {(['high', 'medium', 'low'] as const).map((quality) => (
                 <TouchableOpacity
                   key={quality}
                   style={[
                     styles.exportQualityButton,
-                    settings.exportQuality === quality && styles.exportQualityButtonActive,
+                    settings.export.quality === quality && styles.exportQualityButtonActive,
                   ]}
-                  onPress={() => setSettings({ ...settings, exportQuality: quality as any })}
+                  onPress={() => updateExport({ quality })}
                 >
                   <Text style={styles.exportQualityButtonText}>
                     {quality.charAt(0).toUpperCase() + quality.slice(1)}
@@ -334,13 +335,13 @@ const Settings: React.FC = () => {
               ))}
             </View>
           </View>
-          
+
           <View style={styles.settingRow}>
             <Text style={styles.settingLabel}>Export Path</Text>
             <TextInput
               style={styles.input}
-              value={settings.exportPath}
-              onChangeText={(text) => setSettings({ ...settings, exportPath: text })}
+              value={settings.export.exportPath}
+              onChangeText={(text) => updateExport({ exportPath: text })}
               placeholder="Export path"
               placeholderTextColor="#666"
             />
@@ -359,28 +360,28 @@ const Settings: React.FC = () => {
         <Text style={styles.sectionTitle}>⚡ Performance</Text>
         <Text style={styles.sectionIcon}>{activeSection === 'performance' ? '▼' : '▶'}</Text>
       </TouchableOpacity>
-      
+
       {activeSection === 'performance' && (
         <View style={styles.sectionContent}>
           <View style={styles.settingRow}>
             <Text style={styles.settingLabel}>Hardware Acceleration</Text>
             <Switch
-              value={settings.hardwareAcceleration}
-              onValueChange={(value) => setSettings({ ...settings, hardwareAcceleration: value })}
+              value={settings.performance.hardwareAcceleration}
+              onValueChange={(value) => updatePerformance({ hardwareAcceleration: value })}
             />
           </View>
-          
+
           <View style={styles.settingRow}>
             <Text style={styles.settingLabel}>Max Memory Usage</Text>
             <View style={styles.memoryButtons}>
-              {['low', 'medium', 'high'].map((memory) => (
+              {(['low', 'medium', 'high'] as const).map((memory) => (
                 <TouchableOpacity
                   key={memory}
                   style={[
                     styles.memoryButton,
-                    settings.maxMemoryUsage === memory && styles.memoryButtonActive,
+                    settings.performance.maxMemoryUsage === memory && styles.memoryButtonActive,
                   ]}
-                  onPress={() => setSettings({ ...settings, maxMemoryUsage: memory as any })}
+                  onPress={() => updatePerformance({ maxMemoryUsage: memory })}
                 >
                   <Text style={styles.memoryButtonText}>
                     {memory.charAt(0).toUpperCase() + memory.slice(1)}
@@ -403,22 +404,22 @@ const Settings: React.FC = () => {
         <Text style={styles.sectionTitle}>🔒 Privacy</Text>
         <Text style={styles.sectionIcon}>{activeSection === 'privacy' ? '▼' : '▶'}</Text>
       </TouchableOpacity>
-      
+
       {activeSection === 'privacy' && (
         <View style={styles.sectionContent}>
           <View style={styles.settingRow}>
             <Text style={styles.settingLabel}>Analytics Opt-in</Text>
             <Switch
-              value={settings.analyticsOptIn}
-              onValueChange={(value) => setSettings({ ...settings, analyticsOptIn: value })}
+              value={settings.privacy.analyticsEnabled}
+              onValueChange={(value) => updatePrivacy({ analyticsEnabled: value })}
             />
           </View>
-          
+
           <View style={styles.settingRow}>
             <Text style={styles.settingLabel}>Crash Reports</Text>
             <Switch
-              value={settings.crashReports}
-              onValueChange={(value) => setSettings({ ...settings, crashReports: value })}
+              value={settings.privacy.crashReportsEnabled}
+              onValueChange={(value) => updatePrivacy({ crashReportsEnabled: value })}
             />
           </View>
         </View>
@@ -426,19 +427,44 @@ const Settings: React.FC = () => {
     </Card>
   );
 
-  const handleSaveSettings = () => {
-    console.log('💾 Settings saved:', settings);
-    // Save to storage
+  const handleSaveSettings = async () => {
+    const result = validateSettings(settings);
+    if (!result.valid) {
+      setErrors(result.errors);
+      console.warn('⚠️ Settings validation failed:', result.errors);
+      return;
+    }
+    setErrors([]);
+    try {
+      await storageService.saveSettings(settings);
+      setSaveStatus('saved');
+      setTimeout(() => setSaveStatus('idle'), 2000);
+    } catch (error) {
+      setErrors(['Failed to save settings to disk. Check app permissions.']);
+    }
   };
 
-  const handleResetSettings = () => {
-    console.log('🔄 Settings reset');
-    // Reset to defaults
+  const handleResetSettings = async () => {
+    setSettings(DEFAULT_SETTINGS);
+    setErrors([]);
+    try {
+      await storageService.resetSettings();
+    } catch (error) {
+      console.error('Failed to reset settings on disk:', error);
+    }
   };
+
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#6c63ff" />
+        <Text style={styles.loadingText}>Loading settings…</Text>
+      </View>
+    );
+  }
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      {/* Settings Sections */}
       {renderGeneralSettings()}
       {renderRecordingSettings()}
       {renderAudioSettings()}
@@ -446,10 +472,17 @@ const Settings: React.FC = () => {
       {renderPerformanceSettings()}
       {renderPrivacySettings()}
 
-      {/* Action Buttons */}
+      {errors.length > 0 && (
+        <View style={styles.errorBox}>
+          {errors.map((err) => (
+            <Text key={err} style={styles.errorText}>⚠️ {err}</Text>
+          ))}
+        </View>
+      )}
+
       <View style={styles.actionContainer}>
         <Button
-          title="💾 Save Settings"
+          title={saveStatus === 'saved' ? '✅ Saved' : '💾 Save Settings'}
           onPress={handleSaveSettings}
           variant="primary"
           size="medium"
@@ -464,9 +497,8 @@ const Settings: React.FC = () => {
         />
       </View>
 
-      {/* Version Info */}
       <View style={styles.versionContainer}>
-        <Text style={styles.versionText}>Happy Recorder 3D v0.1.0</Text>
+        <Text style={styles.versionText}>Happy Recorder 3D v{settings.version}</Text>
         <Text style={styles.versionSubtext}>Open Source • MIT License</Text>
       </View>
     </ScrollView>
@@ -477,6 +509,16 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: 'transparent',
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    color: '#a8a8b8',
+    marginTop: 12,
+    fontSize: 14,
   },
   content: {
     padding: 16,
@@ -650,6 +692,17 @@ const styles = StyleSheet.create({
   memoryButtonText: {
     color: '#ffffff',
     fontSize: 12,
+  },
+  errorBox: {
+    backgroundColor: 'rgba(244, 67, 54, 0.15)',
+    borderRadius: 8,
+    padding: 12,
+    marginTop: 8,
+  },
+  errorText: {
+    color: '#f44336',
+    fontSize: 13,
+    marginBottom: 2,
   },
   actionContainer: {
     flexDirection: 'row',
