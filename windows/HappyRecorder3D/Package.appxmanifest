@@ -7,14 +7,14 @@
   IgnorableNamespaces="uap mp">
 
   <Identity
-    Name="05fd1631-ef47-4f2a-8c39-f3958561759e"
-    Publisher="CN=aldan"
+    Name="HappyRecorder3D.HappyRecorder3D"
+    Publisher="CN=50CA2AC2-0155-44AC-B2B0-47100A3FB6E2"
     Version="1.0.0.0" />
 
   <mp:PhoneIdentity PhoneProductId="05fd1631-ef47-4f2a-8c39-f3958561759e" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
 
   <Properties>
-    <DisplayName>HappyRecorder3D</DisplayName>
+    <DisplayName>Happy Recorder 3D</DisplayName>
     <PublisherDisplayName>Happy Recorder 3D</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
   </Properties>
@@ -33,7 +33,7 @@
       Executable="$targetnametoken$.exe"
       EntryPoint="HappyRecorder3D.App">
       <uap:VisualElements
-        DisplayName="HappyRecorder3D"
+        DisplayName="Happy Recorder 3D"
         Square150x150Logo="Assets\Square150x150Logo.png"
         Square44x44Logo="Assets\Square44x44Logo.png"
         Description="HappyRecorder3D"
