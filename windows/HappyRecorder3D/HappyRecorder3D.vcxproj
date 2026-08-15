@@ -79,11 +79,11 @@
       <WarningLevel>Level4</WarningLevel>
       <AdditionalOptions>%(AdditionalOptions) /bigobj</AdditionalOptions>
       <DisableSpecificWarnings>4453;28204</DisableSpecificWarnings>
+      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
-      <!-- Required by HappyRecorderNativeModule.cpp: Windows.Graphics.Capture +
-           Direct3D11/D2D/DWrite interop for screen capture. -->
-      <AdditionalDependencies>d3d11.lib;d2d1.lib;dwrite.lib;windowsapp.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <!-- Required by HappyRecorderNativeModule.cpp: Windows.Graphics.Capture + Direct3D11 + Media Foundation for screen recording -->
+      <AdditionalDependencies>d3d11.lib;dxgi.lib;mfplat.lib;mfreadwrite.lib;mfuuid.lib;windowsapp.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)'=='Debug'">
