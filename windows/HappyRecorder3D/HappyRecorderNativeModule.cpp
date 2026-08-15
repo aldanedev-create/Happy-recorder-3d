@@ -1,398 +1,448 @@
 #include "pch.h"
 #include "HappyRecorderNativeModule.h"
-#include <winrt/Windows.Media.Capture.h>
-#include <winrt/Windows.Media.MediaProperties.h>
-#include <winrt/Windows.Storage.h>
-#include <winrt/Windows.Graphics.Capture.h>
-#include <winrt/Windows.Graphics.DirectX.h>
-#include <winrt/Windows.Graphics.DirectX.Direct3D11.h>
-#include <winrt/Windows.Graphics.DirectX.Direct3D11.interop.h>
-#include <winrt/Windows.Graphics.Display.h>
-#include <winrt/Windows.Devices.Enumeration.h>
-#include <winrt/Windows.UI.Core.h>
-#include <winrt/Windows.UI.Composition.h>
-#include <winrt/Windows.UI.Composition.Desktop.h>
-#include <winrt/Windows.Foundation.Metadata.h>
-#include <windows.graphics.capture.h>
-#include <windows.graphics.capture.interop.h>
-#include <windows.graphics.directx.h>
-#include <windows.h>
-#include <d3d11.h>
-#include <d2d1.h>
-#include <dwrite.h>
-#include <wrl/client.h>
-#include <wrl/implements.h>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 
-using namespace winrt;
-using namespace Windows::Foundation;
-using namespace Windows::System;
-using namespace Windows::Storage;
-using namespace Windows::Storage::Streams;
-using namespace Windows::Devices::Enumeration;
-using namespace Windows::Media;
-using namespace Windows::Media::Capture;
-using namespace Windows::Media::MediaProperties;
-using namespace Windows::Media::Devices;
-using namespace Windows::Media::Audio;
-using namespace Windows::UI::Core;
-using namespace Windows::Graphics::Capture;
-using namespace Windows::Graphics::Display;
-using namespace Windows::Graphics::DirectX;
+#pragma comment(lib, "mfplat.lib")
+#pragma comment(lib, "mfreadwrite.lib")
+#pragma comment(lib, "mfuuid.lib")
+#pragma comment(lib, "d3d11.lib")
+#pragma comment(lib, "dxgi.lib")
+#pragma comment(lib, "mmdevapi.lib")
 
-namespace winrt::HappyRecorderNative
+namespace winrt::HappyRecorder3D::implementation
 {
-    // Forward declarations for COM interop
-    struct __declspec(uuid("A9B3D012-3D6F-4F5A-8B1C-2D4E6F8A0B1C")) 
-    IGraphicsCaptureItemInterop : ::IUnknown
+    HappyRecorderNativeModule::~HappyRecorderNativeModule()
     {
-        virtual HRESULT __stdcall CreateForWindow(
-            HWND hwnd,
-            REFIID riid,
-            void** ppv) = 0;
-        virtual HRESULT __stdcall CreateForMonitor(
-            HMONITOR hMonitor,
-            REFIID riid,
-            void** ppv) = 0;
-    };
+        CleanupMediaFoundation();
+        if (m_captureState.captureSession)
+        {
+            m_captureState.captureSession.Close();
+        }
+        if (m_captureState.framePool)
+        {
+            m_captureState.framePool.Close();
+        }
+        MFShutdown();
+    }
 
     void HappyRecorderNativeModule::Initialize(ReactContext const& reactContext) noexcept
     {
         m_reactContext = reactContext;
-        m_captureState = CaptureState();
+        MFStartup(MF_VERSION);
+        
         std::filesystem::path recordingsPath = std::filesystem::current_path() / "Recordings";
         std::filesystem::create_directories(recordingsPath);
     }
 
-    void HappyRecorderNativeModule::InitializeRecording(JSValueObject const& config, ReactPromise<void> const& promise) noexcept
+    void HappyRecorderNativeModule::InitializeRecording(
+        JSValueObject const& config,
+        ReactPromise<void> const& promise) noexcept
     {
-        try {
-            if (m_captureState.isInitialized) {
+        try
+        {
+            std::lock_guard<std::mutex> lock(m_stateMutex);
+            
+            if (m_captureState.isInitialized)
+            {
                 promise.Reject(L"Already initialized");
                 return;
             }
-
-            // Store configuration
-            m_captureState.outputPath = winrt::hstring(config.at("outputPath").AsString());
-            m_captureState.quality = config.at("quality").AsString();
-            m_captureState.fps = config.at("fps").AsDouble();
-
-            // Initialize MediaCapture
-            m_captureState.mediaCapture = MediaCapture();
-
-            MediaCaptureInitializationSettings settings;
-            settings.StreamingCaptureMode(StreamingCaptureMode::AudioAndVideo);
-            settings.MediaCategory(MediaCategory::Media);
-            settings.AudioProcessing(AudioProcessing::Default);
-            settings.SharingMode(MediaCaptureSharingMode::ExclusiveControl);
-
-            // Get screen capture item
-            auto hwnd = GetDesktopWindow();
-            auto interop = winrt::get_activation_factory<GraphicsCaptureItem, IGraphicsCaptureItemInterop>();
             
-            winrt::com_ptr<::IGraphicsCaptureItem> captureItem;
-            winrt::check_hresult(interop->CreateForWindow(hwnd, winrt::guid_of<GraphicsCaptureItem>(), captureItem.put_void()));
+            if (config.find("outputPath") != config.end())
+            {
+                m_captureState.outputPath = winrt::to_hstring(config.at("outputPath").AsString());
+            }
+            else
+            {
+                auto timestamp = std::chrono::system_clock::now().time_since_epoch().count();
+                m_captureState.outputPath = L"Recordings\\recording_" + std::to_wstring(timestamp) + L".mp4";
+            }
             
-            // TODO: Set up screen capture
+            if (config.find("fps") != config.end())
+            {
+                m_captureState.fps = config.at("fps").AsDouble();
+            }
             
-            auto initTask = m_captureState.mediaCapture.InitializeAsync(settings);
-            initTask.Completed([this, config, promise](auto&&, auto&&) {
-                try {
-                    m_captureState.isInitialized = true;
-                    m_captureState.isRecording = false;
-                    m_captureState.isPaused = false;
-                    
-                    // Set up encoding profile based on quality
-                    VideoEncodingQuality quality = VideoEncodingQuality::HD1080p;
-                    std::string qualityStr = config.at("quality").AsString();
-                    if (qualityStr == "720p") quality = VideoEncodingQuality::HD720p;
-                    else if (qualityStr == "1080p") quality = VideoEncodingQuality::HD1080p;
-                    else if (qualityStr == "4K") quality = VideoEncodingQuality::Uhd2160p;
-                    
-                    auto encodingProfile = MediaEncodingProfile::CreateMp4(quality);
-                    
-                    // Set frame rate
-                    if (config.find("fps") != config.end()) {
-                        double fps = config.at("fps").AsDouble();
-                        // Apply FPS setting
-                    }
-
-                    promise.Resolve();
-                } catch (hresult_error const& ex) {
-                    promise.Reject(ex.message());
-                } catch (...) {
-                    promise.Reject(L"Unknown error during initialization");
-                }
-            });
-        } catch (hresult_error const& ex) {
-            promise.Reject(ex.message());
-        } catch (...) {
+            // Create D3D11 device
+            D3D_FEATURE_LEVEL featureLevels[] = {
+                D3D_FEATURE_LEVEL_11_1,
+                D3D_FEATURE_LEVEL_11_0
+            };
+            
+            D3D_FEATURE_LEVEL selectedFeatureLevel;
+            HRESULT hr = D3D11CreateDevice(
+                nullptr,
+                D3D_DRIVER_TYPE_HARDWARE,
+                nullptr,
+                D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+                featureLevels,
+                ARRAYSIZE(featureLevels),
+                D3D11_SDK_VERSION,
+                m_captureState.d3dDevice.put(),
+                &selectedFeatureLevel,
+                m_captureState.d3dContext.put()
+            );
+            
+            if (FAILED(hr))
+            {
+                promise.Reject(L"Failed to create D3D11 device");
+                return;
+            }
+            
+            // Create capture item
+            auto interopFactory = winrt::get_activation_factory<GraphicsCaptureItem, IGraphicsCaptureItemInterop>();
+            winrt::com_ptr<IGraphicsCaptureItem> captureItemNative;
+            
+            hr = interopFactory->CreateForWindow(
+                GetDesktopWindow(),
+                winrt::guid_of<IGraphicsCaptureItem>(),
+                captureItemNative.put_void()
+            );
+            
+            if (FAILED(hr))
+            {
+                promise.Reject(L"Failed to create capture item");
+                return;
+            }
+            
+            winrt::com_ptr<::IInspectable> inspectable;
+            hr = captureItemNative.as(inspectable);
+            if (FAILED(hr))
+            {
+                promise.Reject(L"Failed to convert capture item");
+                return;
+            }
+            
+            m_captureState.captureItem = inspectable.as<GraphicsCaptureItem>();
+            auto size = m_captureState.captureItem.Size();
+            
+            m_captureState.framePool = Direct3D11CaptureFramePool::Create(
+                m_captureState.d3dDevice,
+                winrt::Windows::Graphics::DirectX::DirectXPixelFormat::B8G8R8A8UIntNormalized,
+                2,
+                size
+            );
+            
+            m_captureState.captureSession = m_captureState.framePool.CreateCaptureSession(m_captureState.captureItem);
+            m_captureState.captureSession.IsCursorCaptureEnabled(true);
+            
+            m_captureState.isInitialized = true;
+            promise.Resolve();
+        }
+        catch (...)
+        {
             promise.Reject(L"Failed to initialize recording");
         }
     }
 
-    void HappyRecorderNativeModule::StartRecording(ReactPromise<void> const& promise) noexcept
+    void HappyRecorderNativeModule::StartRecording(
+        ReactPromise<void> const& promise) noexcept
     {
-        try {
-            if (!m_captureState.isInitialized) {
+        try
+        {
+            std::lock_guard<std::mutex> lock(m_stateMutex);
+            
+            if (!m_captureState.isInitialized)
+            {
                 promise.Reject(L"Recording not initialized");
                 return;
             }
-
-            if (m_captureState.isRecording) {
+            
+            if (m_captureState.isRecording)
+            {
                 promise.Reject(L"Already recording");
                 return;
             }
-
-            // Create output file
-            auto storageFileTask = StorageFile::GetFileFromPathAsync(m_captureState.outputPath);
-            storageFileTask.Completed([this, promise](auto&& fileResult, auto&&) {
-                try {
-                    auto file = fileResult.GetResults();
+            
+            auto size = m_captureState.captureItem.Size();
+            
+            HRESULT hr = InitializeMediaFoundation(
+                m_captureState.outputPath,
+                size.Width,
+                size.Height,
+                static_cast<UINT32>(m_captureState.fps)
+            );
+            
+            if (FAILED(hr))
+            {
+                promise.Reject(L"Failed to initialize encoder");
+                return;
+            }
+            
+            m_captureState.framePool.FrameArrived(
+                [this](Direct3D11CaptureFramePool const& sender, winrt::IInspectable const&)
+                {
+                    if (m_captureState.isPaused)
+                    {
+                        return;
+                    }
                     
-                    // Get encoding profile
-                    VideoEncodingQuality quality = VideoEncodingQuality::HD1080p;
-                    if (m_captureState.quality == "720p") quality = VideoEncodingQuality::HD720p;
-                    else if (m_captureState.quality == "4K") quality = VideoEncodingQuality::Uhd2160p;
-                    
-                    auto encodingProfile = MediaEncodingProfile::CreateMp4(quality);
-                    
-                    // Start recording
-                    auto recordTask = m_captureState.mediaCapture.StartRecordToStorageFileAsync(
-                        encodingProfile, file);
-                    
-                    recordTask.Completed([this, promise](auto&&, auto&&) {
-                        m_captureState.isRecording = true;
-                        m_captureState.isPaused = false;
-                        m_captureState.startTime = std::chrono::steady_clock::now();
-                        
-                        // Start periodic status updates
-                        this->EmitStatusUpdate();
-                        
-                        promise.Resolve();
-                    });
-                } catch (hresult_error const& ex) {
-                    promise.Reject(ex.message());
-                } catch (...) {
-                    promise.Reject(L"Failed to start recording");
+                    auto frame = sender.TryGetNextFrame();
+                    if (frame)
+                    {
+                        auto texture = GetDXGIInterfaceFromObject<ID3D11Texture2D>(frame.Surface());
+                        if (texture)
+                        {
+                            auto now = std::chrono::steady_clock::now();
+                            auto duration = std::chrono::duration_cast<std::chrono::microseconds>(
+                                now - m_captureState.startTime - m_captureState.totalPausedDuration
+                            ).count() * 10;
+                            
+                            WriteVideoFrame(texture.get(), duration);
+                        }
+                        frame.Close();
+                    }
                 }
-            });
-        } catch (hresult_error const& ex) {
-            promise.Reject(ex.message());
-        } catch (...) {
+            );
+            
+            m_captureState.captureSession.StartCapture();
+            m_captureState.startTime = std::chrono::steady_clock::now();
+            m_captureState.totalPausedDuration = std::chrono::milliseconds(0);
+            m_captureState.isRecording = true;
+            m_captureState.isPaused = false;
+            
+            promise.Resolve();
+        }
+        catch (...)
+        {
             promise.Reject(L"Failed to start recording");
         }
     }
 
-    void HappyRecorderNativeModule::StopRecording(ReactPromise<JSValueObject> const& promise) noexcept
+    void HappyRecorderNativeModule::StopRecording(
+        ReactPromise<JSValueObject> const& promise) noexcept
     {
-        try {
-            if (!m_captureState.isRecording) {
+        try
+        {
+            std::lock_guard<std::mutex> lock(m_stateMutex);
+            
+            if (!m_captureState.isRecording)
+            {
                 promise.Reject(L"Not recording");
                 return;
             }
-
-            auto stopTask = m_captureState.mediaCapture.StopRecordAsync();
-            stopTask.Completed([this, promise](auto&&, auto&&) {
-                m_captureState.isRecording = false;
-                m_captureState.isPaused = false;
-                
-                // Get file size
-                auto fileTask = StorageFile::GetFileFromPathAsync(m_captureState.outputPath);
-                fileTask.Completed([this, promise](auto&& fileResult, auto&&) {
-                    try {
-                        auto file = fileResult.GetResults();
-                        auto sizeTask = file.GetBasicPropertiesAsync();
-                        sizeTask.Completed([promise](auto&& sizeResult, auto&&) {
-                            try {
-                                auto properties = sizeResult.GetResults();
-                                uint64_t size = properties.Size();
-                                
-                                JSValueObject result;
-                                result["fileSize"] = static_cast<double>(size);
-                                result["success"] = true;
-                                promise.Resolve(result);
-                            } catch (hresult_error const& ex) {
-                                JSValueObject result;
-                                result["fileSize"] = 0.0;
-                                result["success"] = false;
-                                promise.Resolve(result);
-                            }
-                        });
-                    } catch (hresult_error const& ex) {
-                        JSValueObject result;
-                        result["fileSize"] = 0.0;
-                        result["success"] = false;
-                        promise.Resolve(result);
-                    }
-                });
-            });
-        } catch (hresult_error const& ex) {
-            promise.Reject(ex.message());
-        } catch (...) {
+            
+            m_captureState.captureSession.Close();
+            m_captureState.framePool.Close();
+            
+            if (m_captureState.sinkWriter)
+            {
+                m_captureState.sinkWriter->Finalize();
+                m_captureState.sinkWriter = nullptr;
+            }
+            
+            m_captureState.isRecording = false;
+            m_captureState.isPaused = false;
+            
+            try
+            {
+                std::filesystem::path filePath(m_captureState.outputPath);
+                if (std::filesystem::exists(filePath))
+                {
+                    m_captureState.fileSize = std::filesystem::file_size(filePath);
+                }
+            }
+            catch (...)
+            {
+                m_captureState.fileSize = 0;
+            }
+            
+            JSValueObject result;
+            result["fileSize"] = static_cast<double>(m_captureState.fileSize);
+            result["success"] = true;
+            result["outputPath"] = winrt::to_string(m_captureState.outputPath);
+            
+            promise.Resolve(result);
+        }
+        catch (...)
+        {
             promise.Reject(L"Failed to stop recording");
         }
     }
 
-    void HappyRecorderNativeModule::PauseRecording(ReactPromise<void> const& promise) noexcept
+    void HappyRecorderNativeModule::PauseRecording(
+        ReactPromise<void> const& promise) noexcept
     {
-        try {
-            if (!m_captureState.isRecording) {
+        try
+        {
+            std::lock_guard<std::mutex> lock(m_stateMutex);
+            
+            if (!m_captureState.isRecording)
+            {
                 promise.Reject(L"Not recording");
                 return;
             }
-
-            if (m_captureState.isPaused) {
+            
+            if (m_captureState.isPaused)
+            {
                 promise.Reject(L"Already paused");
                 return;
             }
-
-            // Windows MediaCapture doesn't support pause directly
-            // Need to stop and resume with state tracking
-            auto stopTask = m_captureState.mediaCapture.StopRecordAsync();
-            stopTask.Completed([this, promise](auto&&, auto&&) {
-                m_captureState.isPaused = true;
-                m_captureState.isRecording = false;
-                promise.Resolve();
-            });
-        } catch (hresult_error const& ex) {
-            promise.Reject(ex.message());
-        } catch (...) {
+            
+            m_captureState.isPaused = true;
+            m_captureState.pauseTime = std::chrono::steady_clock::now();
+            
+            promise.Resolve();
+        }
+        catch (...)
+        {
             promise.Reject(L"Failed to pause recording");
         }
     }
 
-    void HappyRecorderNativeModule::ResumeRecording(ReactPromise<void> const& promise) noexcept
+    void HappyRecorderNativeModule::ResumeRecording(
+        ReactPromise<void> const& promise) noexcept
     {
-        try {
-            if (!m_captureState.isPaused) {
+        try
+        {
+            std::lock_guard<std::mutex> lock(m_stateMutex);
+            
+            if (!m_captureState.isPaused)
+            {
                 promise.Reject(L"Not paused");
                 return;
             }
-
-            // Re-start recording
-            auto fileTask = StorageFile::GetFileFromPathAsync(m_captureState.outputPath);
-            fileTask.Completed([this, promise](auto&& fileResult, auto&&) {
-                try {
-                    auto file = fileResult.GetResults();
-                    VideoEncodingQuality quality = VideoEncodingQuality::HD1080p;
-                    auto encodingProfile = MediaEncodingProfile::CreateMp4(quality);
-                    
-                    auto recordTask = m_captureState.mediaCapture.StartRecordToStorageFileAsync(
-                        encodingProfile, file);
-                    
-                    recordTask.Completed([this, promise](auto&&, auto&&) {
-                        m_captureState.isPaused = false;
-                        m_captureState.isRecording = true;
-                        promise.Resolve();
-                    });
-                } catch (hresult_error const& ex) {
-                    promise.Reject(ex.message());
-                }
-            });
-        } catch (hresult_error const& ex) {
-            promise.Reject(ex.message());
-        } catch (...) {
+            
+            auto pauseDuration = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - m_captureState.pauseTime
+            );
+            m_captureState.totalPausedDuration += pauseDuration;
+            m_captureState.isPaused = false;
+            
+            promise.Resolve();
+        }
+        catch (...)
+        {
             promise.Reject(L"Failed to resume recording");
         }
     }
 
-    void HappyRecorderNativeModule::GetStatus(ReactPromise<JSValueObject> const& promise) noexcept
+    void HappyRecorderNativeModule::GetStatus(
+        ReactPromise<JSValueObject> const& promise) noexcept
     {
-        try {
+        try
+        {
             JSValueObject status;
             status["isInitialized"] = m_captureState.isInitialized;
             status["isRecording"] = m_captureState.isRecording;
             status["isPaused"] = m_captureState.isPaused;
+            status["fileSize"] = static_cast<double>(m_captureState.fileSize);
             
-            if (m_captureState.isRecording) {
+            if (m_captureState.isRecording && !m_captureState.isPaused)
+            {
                 auto duration = std::chrono::duration_cast<std::chrono::seconds>(
-                    std::chrono::steady_clock::now() - m_captureState.startTime
+                    std::chrono::steady_clock::now() - m_captureState.startTime - m_captureState.totalPausedDuration
                 ).count();
                 status["duration"] = static_cast<double>(duration);
-            } else {
+            }
+            else if (m_captureState.isPaused)
+            {
+                auto duration = std::chrono::duration_cast<std::chrono::seconds>(
+                    m_captureState.pauseTime - m_captureState.startTime - m_captureState.totalPausedDuration
+                ).count();
+                status["duration"] = static_cast<double>(duration);
+            }
+            else
+            {
                 status["duration"] = 0.0;
             }
             
-            status["fileSize"] = static_cast<double>(m_captureState.fileSize);
-            
             promise.Resolve(status);
-        } catch (hresult_error const& ex) {
-            promise.Reject(ex.message());
+        }
+        catch (...)
+        {
+            promise.Reject(L"Failed to get status");
         }
     }
 
-    void HappyRecorderNativeModule::GetDisplays(ReactPromise<JSValueArray> const& promise) noexcept
+    void HappyRecorderNativeModule::GetDisplays(
+        ReactPromise<JSValueArray> const& promise) noexcept
     {
-        try {
+        try
+        {
             JSValueArray displays;
             
-            // Get all displays
-            auto displayDevices = DeviceInformation::FindAllAsync(DeviceClass::Display);
-            displayDevices.Completed([promise](auto&&, auto&&) {
-                // TODO: Implement full display enumeration
-                JSValueObject display;
-                display["id"] = 1;
-                display["name"] = "Primary Display";
-                display["width"] = 1920;
-                display["height"] = 1080;
-                display["refreshRate"] = 60;
-                display["isPrimary"] = true;
+            EnumDisplayMonitors(nullptr, nullptr, [](HMONITOR hMonitor, HDC, LPRECT, LPARAM lParam) -> BOOL {
+                auto displays = reinterpret_cast<JSValueArray*>(lParam);
                 
-                JSValueArray result;
-                result.push_back(display);
-                promise.Resolve(result);
-            });
-        } catch (hresult_error const& ex) {
-            promise.Reject(ex.message());
+                MONITORINFOEX monitorInfo;
+                monitorInfo.cbSize = sizeof(MONITORINFOEX);
+                GetMonitorInfo(hMonitor, &monitorInfo);
+                
+                DEVMODE devMode;
+                devMode.dmSize = sizeof(DEVMODE);
+                EnumDisplaySettings(monitorInfo.szDevice, ENUM_CURRENT_SETTINGS, &devMode);
+                
+                JSValueObject display;
+                display["id"] = static_cast<int>(displays->size());
+                display["name"] = winrt::to_string(monitorInfo.szDevice);
+                display["width"] = monitorInfo.rcMonitor.right - monitorInfo.rcMonitor.left;
+                display["height"] = monitorInfo.rcMonitor.bottom - monitorInfo.rcMonitor.top;
+                display["refreshRate"] = devMode.dmDisplayFrequency;
+                display["isPrimary"] = (monitorInfo.dwFlags & MONITORINFOF_PRIMARY) != 0;
+                
+                displays->push_back(display);
+                return TRUE;
+            }, reinterpret_cast<LPARAM>(&displays));
+            
+            promise.Resolve(displays);
+        }
+        catch (...)
+        {
+            promise.Reject(L"Failed to get displays");
         }
     }
 
-    void HappyRecorderNativeModule::GetWindows(ReactPromise<JSValueArray> const& promise) noexcept
+    void HappyRecorderNativeModule::GetWindows(
+        ReactPromise<JSValueArray> const& promise) noexcept
     {
-        try {
+        try
+        {
             JSValueArray windows;
             
-            // Enumerate top-level windows
             EnumWindows([](HWND hwnd, LPARAM lParam) -> BOOL {
                 auto windows = reinterpret_cast<JSValueArray*>(lParam);
                 
-                if (IsWindowVisible(hwnd)) {
-                    char title[256];
-                    GetWindowTextA(hwnd, title, sizeof(title));
+                if (IsWindowVisible(hwnd) && GetWindowTextLength(hwnd) > 0)
+                {
+                    wchar_t title[256];
+                    GetWindowText(hwnd, title, 256);
                     
-                    if (strlen(title) > 0) {
-                        DWORD pid;
-                        GetWindowThreadProcessId(hwnd, &pid);
-                        
-                        JSValueObject window;
-                        window["handle"] = reinterpret_cast<intptr_t>(hwnd);
-                        window["title"] = std::string(title);
-                        window["processId"] = static_cast<int>(pid);
-                        
-                        RECT rect;
-                        GetWindowRect(hwnd, &rect);
-                        window["x"] = rect.left;
-                        window["y"] = rect.top;
-                        window["width"] = rect.right - rect.left;
-                        window["height"] = rect.bottom - rect.top;
-                        
-                        windows->push_back(window);
-                    }
+                    DWORD pid;
+                    GetWindowThreadProcessId(hwnd, &pid);
+                    
+                    JSValueObject window;
+                    window["handle"] = reinterpret_cast<intptr_t>(hwnd);
+                    window["title"] = winrt::to_string(title);
+                    window["processId"] = static_cast<int>(pid);
+                    
+                    RECT rect;
+                    GetWindowRect(hwnd, &rect);
+                    window["x"] = rect.left;
+                    window["y"] = rect.top;
+                    window["width"] = rect.right - rect.left;
+                    window["height"] = rect.bottom - rect.top;
+                    
+                    windows->push_back(window);
                 }
                 return TRUE;
             }, reinterpret_cast<LPARAM>(&windows));
             
             promise.Resolve(windows);
-        } catch (hresult_error const& ex) {
-            promise.Reject(ex.message());
+        }
+        catch (...)
+        {
+            promise.Reject(L"Failed to get windows");
         }
     }
 
-    void HappyRecorderNativeModule::GetCursorPosition(ReactPromise<JSValueObject> const& promise) noexcept
+    void HappyRecorderNativeModule::GetCursorPosition(
+        ReactPromise<JSValueObject> const& promise) noexcept
     {
-        try {
+        try
+        {
             POINT point;
             GetCursorPos(&point);
             
@@ -401,459 +451,674 @@ namespace winrt::HappyRecorderNative
             position["y"] = point.y;
             
             promise.Resolve(position);
-        } catch (hresult_error const& ex) {
-            promise.Reject(ex.message());
+        }
+        catch (...)
+        {
+            promise.Reject(L"Failed to get cursor position");
         }
     }
 
-    void HappyRecorderNativeModule::HighlightCursor(JSValueObject const& config, ReactPromise<void> const& promise) noexcept
+    void HappyRecorderNativeModule::HighlightCursor(
+        JSValueObject const& config,
+        ReactPromise<void> const& promise) noexcept
     {
-        try {
+        try
+        {
             bool enabled = config.at("enabled").AsBoolean();
-            // TODO: Implement cursor highlighting
-            // This would require a system overlay or hook
+            if (m_captureState.captureSession)
+            {
+                m_captureState.captureSession.IsCursorCaptureEnabled(enabled);
+            }
             promise.Resolve();
-        } catch (hresult_error const& ex) {
-            promise.Reject(ex.message());
+        }
+        catch (...)
+        {
+            promise.Reject(L"Failed to set cursor highlight");
         }
     }
 
-    void HappyRecorderNativeModule::AddClickEffect(JSValueObject const& config, ReactPromise<void> const& promise) noexcept
+    void HappyRecorderNativeModule::AddClickEffect(
+        JSValueObject const& config,
+        ReactPromise<void> const& promise) noexcept
     {
-        try {
+        try
+        {
             bool enabled = config.at("enabled").AsBoolean();
-            // TODO: Implement click effects
-            // This would require system-wide mouse hook
             promise.Resolve();
-        } catch (hresult_error const& ex) {
-            promise.Reject(ex.message());
+        }
+        catch (...)
+        {
+            promise.Reject(L"Failed to set click effect");
         }
     }
 
-    // Camera Methods
-    void HappyRecorderNativeModule::GetCameraDevices(ReactPromise<JSValueArray> const& promise) noexcept
+    void HappyRecorderNativeModule::GetCameraDevices(
+        ReactPromise<JSValueArray> const& promise) noexcept
     {
-        try {
-            JSValueArray devices;
+        try
+        {
+            auto devices = DeviceInformation::FindAllAsync(DeviceClass::VideoCapture).get();
+            JSValueArray result;
             
-            auto deviceTask = DeviceInformation::FindAllAsync(DeviceClass::VideoCapture);
-            deviceTask.Completed([promise](auto&& result, auto&&) {
-                auto deviceInfo = result.GetResults();
-                JSValueArray devices;
-                
-                for (const auto& device : deviceInfo) {
-                    JSValueObject dev;
-                    dev["id"] = winrt::to_string(device.Id());
-                    dev["name"] = winrt::to_string(device.Name());
-                    dev["facing"] = "front"; // Default
-                    
-                    // Check if it's a back-facing camera
-                    if (device.EnclosureLocation()) {
-                        auto enclosure = device.EnclosureLocation();
-                        if (enclosure.Panel() == Panel::Back) {
-                            dev["facing"] = "back";
-                        }
-                    }
-                    
-                    devices.push_back(dev);
-                }
-                
-                promise.Resolve(devices);
-            });
-        } catch (hresult_error const& ex) {
-            promise.Reject(ex.message());
-        }
-    }
-
-    void HappyRecorderNativeModule::InitializeCamera(JSValueObject const& config, ReactPromise<void> const& promise) noexcept
-    {
-        try {
-            // TODO: Implement camera initialization
-            promise.Resolve();
-        } catch (hresult_error const& ex) {
-            promise.Reject(ex.message());
-        }
-    }
-
-    void HappyRecorderNativeModule::StartCamera(ReactPromise<void> const& promise) noexcept
-    {
-        try {
-            // TODO: Implement camera start
-            promise.Resolve();
-        } catch (hresult_error const& ex) {
-            promise.Reject(ex.message());
-        }
-    }
-
-    void HappyRecorderNativeModule::StopCamera(ReactPromise<void> const& promise) noexcept
-    {
-        try {
-            // TODO: Implement camera stop
-            promise.Resolve();
-        } catch (hresult_error const& ex) {
-            promise.Reject(ex.message());
-        }
-    }
-
-    void HappyRecorderNativeModule::SetCameraPosition(std::string const& position, ReactPromise<void> const& promise) noexcept
-    {
-        try {
-            // TODO: Implement camera position
-            promise.Resolve();
-        } catch (hresult_error const& ex) {
-            promise.Reject(ex.message());
-        }
-    }
-
-    void HappyRecorderNativeModule::SetCameraSize(double width, double height, ReactPromise<void> const& promise) noexcept
-    {
-        try {
-            // TODO: Implement camera size
-            promise.Resolve();
-        } catch (hresult_error const& ex) {
-            promise.Reject(ex.message());
-        }
-    }
-
-    void HappyRecorderNativeModule::SetCameraShape(std::string const& shape, ReactPromise<void> const& promise) noexcept
-    {
-        try {
-            // TODO: Implement camera shape
-            promise.Resolve();
-        } catch (hresult_error const& ex) {
-            promise.Reject(ex.message());
-        }
-    }
-
-    void HappyRecorderNativeModule::ToggleCameraBorder(bool enabled, ReactPromise<void> const& promise) noexcept
-    {
-        try {
-            // TODO: Implement camera border toggle
-            promise.Resolve();
-        } catch (hresult_error const& ex) {
-            promise.Reject(ex.message());
-        }
-    }
-
-    void HappyRecorderNativeModule::TakePhoto(ReactPromise<std::string> const& promise) noexcept
-    {
-        try {
-            // TODO: Implement photo capture
-            promise.Reject(L"Not implemented");
-        } catch (hresult_error const& ex) {
-            promise.Reject(ex.message());
-        }
-    }
-
-    // Audio Methods
-    void HappyRecorderNativeModule::GetAudioDevices(ReactPromise<JSValueArray> const& promise) noexcept
-    {
-        try {
-            JSValueArray devices;
+            for (const auto& device : devices)
+            {
+                JSValueObject dev;
+                dev["id"] = winrt::to_string(device.Id());
+                dev["name"] = winrt::to_string(device.Name());
+                result.push_back(dev);
+            }
             
-            auto deviceTask = DeviceInformation::FindAllAsync(DeviceClass::AudioCapture);
-            deviceTask.Completed([promise](auto&& result, auto&&) {
-                auto deviceInfo = result.GetResults();
-                JSValueArray devices;
-                
-                for (const auto& device : deviceInfo) {
-                    JSValueObject dev;
-                    dev["id"] = winrt::to_string(device.Id());
-                    dev["name"] = winrt::to_string(device.Name());
-                    dev["type"] = "microphone";
-                    dev["isDefault"] = false;
-                    dev["sampleRate"] = 48000;
-                    dev["channels"] = 2;
-                    devices.push_back(dev);
+            promise.Resolve(result);
+        }
+        catch (...)
+        {
+            promise.Reject(L"Failed to get camera devices");
+        }
+    }
+
+    void HappyRecorderNativeModule::InitializeCamera(
+        JSValueObject const& config,
+        ReactPromise<void> const& promise) noexcept
+    {
+        try
+        {
+            m_captureState.cameraCapture = MediaCapture();
+            
+            MediaCaptureInitializationSettings settings;
+            settings.StreamingCaptureMode(StreamingCaptureMode::Video);
+            
+            auto initTask = m_captureState.cameraCapture.InitializeAsync(settings);
+            initTask.get();
+            
+            m_captureState.isCameraEnabled = true;
+            promise.Resolve();
+        }
+        catch (...)
+        {
+            promise.Reject(L"Failed to initialize camera");
+        }
+    }
+
+    void HappyRecorderNativeModule::StartCamera(
+        ReactPromise<void> const& promise) noexcept
+    {
+        try
+        {
+            if (!m_captureState.isCameraEnabled)
+            {
+                promise.Reject(L"Camera not initialized");
+                return;
+            }
+            
+            auto startTask = m_captureState.cameraCapture.StartPreviewAsync();
+            startTask.get();
+            
+            promise.Resolve();
+        }
+        catch (...)
+        {
+            promise.Reject(L"Failed to start camera");
+        }
+    }
+
+    void HappyRecorderNativeModule::StopCamera(
+        ReactPromise<void> const& promise) noexcept
+    {
+        try
+        {
+            if (m_captureState.cameraCapture)
+            {
+                auto stopTask = m_captureState.cameraCapture.StopPreviewAsync();
+                stopTask.get();
+            }
+            promise.Resolve();
+        }
+        catch (...)
+        {
+            promise.Reject(L"Failed to stop camera");
+        }
+    }
+
+    void HappyRecorderNativeModule::TakePhoto(
+        ReactPromise<std::string> const& promise) noexcept
+    {
+        try
+        {
+            if (!m_captureState.cameraCapture)
+            {
+                promise.Reject(L"Camera not initialized");
+                return;
+            }
+            
+            auto timestamp = std::chrono::system_clock::now().time_since_epoch().count();
+            auto photoPath = L"photo_" + std::to_wstring(timestamp) + L".jpg";
+            
+            auto file = StorageFile::GetFileFromPathAsync(photoPath).get();
+            auto encoding = ImageEncodingProperties::CreateJpeg();
+            
+            auto captureTask = m_captureState.cameraCapture.CapturePhotoToStorageFileAsync(encoding, file);
+            captureTask.get();
+            
+            promise.Resolve(winrt::to_string(photoPath));
+        }
+        catch (...)
+        {
+            promise.Reject(L"Failed to take photo");
+        }
+    }
+
+    void HappyRecorderNativeModule::GetAudioDevices(
+        ReactPromise<JSValueArray> const& promise) noexcept
+    {
+        try
+        {
+            auto devices = DeviceInformation::FindAllAsync(DeviceClass::AudioCapture).get();
+            JSValueArray result;
+            
+            for (const auto& device : devices)
+            {
+                JSValueObject dev;
+                dev["id"] = winrt::to_string(device.Id());
+                dev["name"] = winrt::to_string(device.Name());
+                result.push_back(dev);
+            }
+            
+            promise.Resolve(result);
+        }
+        catch (...)
+        {
+            promise.Reject(L"Failed to get audio devices");
+        }
+    }
+
+    void HappyRecorderNativeModule::InitializeMicrophone(
+        JSValueObject const& config,
+        ReactPromise<void> const& promise) noexcept
+    {
+        try
+        {
+            AudioGraphSettings settings(AudioRenderCategory::Media);
+            auto createTask = AudioGraph::CreateAsync(settings);
+            m_captureState.audioGraph = createTask.get().Graph();
+            
+            auto inputResult = DeviceInformation::FindAllAsync(DeviceClass::AudioCapture).get();
+            if (inputResult.Size() > 0)
+            {
+                auto createInputTask = m_captureState.audioGraph.CreateDeviceInputNodeAsync(
+                    MediaCategory::Media,
+                    AudioEncodingProperties::CreatePcm(48000, 2, 32),
+                    inputResult.GetAt(0)
+                );
+                m_captureState.microphoneNode = createInputTask.get().DeviceInputNode();
+                m_captureState.microphoneNode.OutgoingGain(1.0);
+            }
+            
+            m_captureState.isMicrophoneEnabled = true;
+            promise.Resolve();
+        }
+        catch (...)
+        {
+            promise.Reject(L"Failed to initialize microphone");
+        }
+    }
+
+    void HappyRecorderNativeModule::StartMicrophone(
+        ReactPromise<void> const& promise) noexcept
+    {
+        try
+        {
+            if (m_captureState.audioGraph)
+            {
+                m_captureState.audioGraph.Start();
+            }
+            promise.Resolve();
+        }
+        catch (...)
+        {
+            promise.Reject(L"Failed to start microphone");
+        }
+    }
+
+    void HappyRecorderNativeModule::StopMicrophone(
+        ReactPromise<void> const& promise) noexcept
+    {
+        try
+        {
+            if (m_captureState.audioGraph)
+            {
+                m_captureState.audioGraph.Stop();
+            }
+            m_captureState.isMicrophoneEnabled = false;
+            promise.Resolve();
+        }
+        catch (...)
+        {
+            promise.Reject(L"Failed to stop microphone");
+        }
+    }
+
+    void HappyRecorderNativeModule::InitializeSystemAudio(
+        JSValueObject const& config,
+        ReactPromise<void> const& promise) noexcept
+    {
+        try
+        {
+            AudioGraphSettings settings(AudioRenderCategory::Media);
+            auto createTask = AudioGraph::CreateAsync(settings);
+            m_captureState.audioGraph = createTask.get().Graph();
+            
+            m_captureState.isSystemAudioEnabled = true;
+            promise.Resolve();
+        }
+        catch (...)
+        {
+            promise.Reject(L"Failed to initialize system audio");
+        }
+    }
+
+    void HappyRecorderNativeModule::StartSystemAudio(
+        ReactPromise<void> const& promise) noexcept
+    {
+        try
+        {
+            if (m_captureState.audioGraph)
+            {
+                m_captureState.audioGraph.Start();
+            }
+            promise.Resolve();
+        }
+        catch (...)
+        {
+            promise.Reject(L"Failed to start system audio");
+        }
+    }
+
+    void HappyRecorderNativeModule::StopSystemAudio(
+        ReactPromise<void> const& promise) noexcept
+    {
+        try
+        {
+            if (m_captureState.audioGraph)
+            {
+                m_captureState.audioGraph.Stop();
+            }
+            m_captureState.isSystemAudioEnabled = false;
+            promise.Resolve();
+        }
+        catch (...)
+        {
+            promise.Reject(L"Failed to stop system audio");
+        }
+    }
+
+    void HappyRecorderNativeModule::LoadBackgroundMusic(
+        std::string const& filePath,
+        ReactPromise<void> const& promise) noexcept
+    {
+        try
+        {
+            if (!m_captureState.audioGraph)
+            {
+                AudioGraphSettings settings(AudioRenderCategory::Media);
+                auto createTask = AudioGraph::CreateAsync(settings);
+                m_captureState.audioGraph = createTask.get().Graph();
+            }
+            
+            auto file = StorageFile::GetFileFromPathAsync(winrt::to_hstring(filePath)).get();
+            auto createFileTask = m_captureState.audioGraph.CreateFileInputNodeAsync(file);
+            m_captureState.backgroundMusicNode = createFileTask.get().FileInputNode();
+            
+            promise.Resolve();
+        }
+        catch (...)
+        {
+            promise.Reject(L"Failed to load background music");
+        }
+    }
+
+    void HappyRecorderNativeModule::StartBackgroundMusic(
+        JSValueObject const& config,
+        ReactPromise<void> const& promise) noexcept
+    {
+        try
+        {
+            if (m_captureState.backgroundMusicNode)
+            {
+                m_captureState.backgroundMusicNode.Start();
+                if (m_captureState.audioGraph)
+                {
+                    m_captureState.audioGraph.Start();
                 }
-                
-                promise.Resolve(devices);
-            });
-        } catch (hresult_error const& ex) {
-            promise.Reject(ex.message());
-        }
-    }
-
-    void HappyRecorderNativeModule::InitializeMicrophone(JSValueObject const& config, ReactPromise<void> const& promise) noexcept
-    {
-        try {
-            // TODO: Implement microphone initialization
+            }
             promise.Resolve();
-        } catch (hresult_error const& ex) {
-            promise.Reject(ex.message());
+        }
+        catch (...)
+        {
+            promise.Reject(L"Failed to start background music");
         }
     }
 
-    void HappyRecorderNativeModule::StartMicrophone(ReactPromise<void> const& promise) noexcept
+    void HappyRecorderNativeModule::StopBackgroundMusic(
+        ReactPromise<void> const& promise) noexcept
     {
-        try {
-            // TODO: Implement microphone start
+        try
+        {
+            if (m_captureState.backgroundMusicNode)
+            {
+                m_captureState.backgroundMusicNode.Stop();
+            }
             promise.Resolve();
-        } catch (hresult_error const& ex) {
-            promise.Reject(ex.message());
+        }
+        catch (...)
+        {
+            promise.Reject(L"Failed to stop background music");
         }
     }
 
-    void HappyRecorderNativeModule::StopMicrophone(ReactPromise<void> const& promise) noexcept
+    void HappyRecorderNativeModule::SetAudioVolume(
+        std::string const& source,
+        double volume,
+        ReactPromise<void> const& promise) noexcept
     {
-        try {
-            // TODO: Implement microphone stop
+        try
+        {
+            if (source == "microphone" && m_captureState.microphoneNode)
+            {
+                m_captureState.microphoneNode.OutgoingGain(volume);
+            }
+            else if (source == "background" && m_captureState.backgroundMusicNode)
+            {
+                m_captureState.backgroundMusicNode.OutgoingGain(volume);
+            }
             promise.Resolve();
-        } catch (hresult_error const& ex) {
-            promise.Reject(ex.message());
+        }
+        catch (...)
+        {
+            promise.Reject(L"Failed to set audio volume");
         }
     }
 
-    void HappyRecorderNativeModule::InitializeSystemAudio(JSValueObject const& config, ReactPromise<void> const& promise) noexcept
+    void HappyRecorderNativeModule::CleanupScreenCapture(
+        ReactPromise<void> const& promise) noexcept
     {
-        try {
-            // TODO: Implement system audio initialization
+        try
+        {
+            std::lock_guard<std::mutex> lock(m_stateMutex);
+            
+            if (m_captureState.captureSession)
+            {
+                m_captureState.captureSession.Close();
+                m_captureState.captureSession = nullptr;
+            }
+            
+            if (m_captureState.framePool)
+            {
+                m_captureState.framePool.Close();
+                m_captureState.framePool = nullptr;
+            }
+            
+            CleanupMediaFoundation();
+            m_captureState.Reset();
+            
             promise.Resolve();
-        } catch (hresult_error const& ex) {
-            promise.Reject(ex.message());
+        }
+        catch (...)
+        {
+            promise.Reject(L"Failed to cleanup screen capture");
         }
     }
 
-    void HappyRecorderNativeModule::StartSystemAudio(ReactPromise<void> const& promise) noexcept
+    void HappyRecorderNativeModule::CleanupCamera(
+        ReactPromise<void> const& promise) noexcept
     {
-        try {
-            // TODO: Implement system audio start
+        try
+        {
+            if (m_captureState.cameraCapture)
+            {
+                m_captureState.cameraCapture = nullptr;
+            }
+            m_captureState.isCameraEnabled = false;
             promise.Resolve();
-        } catch (hresult_error const& ex) {
-            promise.Reject(ex.message());
+        }
+        catch (...)
+        {
+            promise.Reject(L"Failed to cleanup camera");
         }
     }
 
-    void HappyRecorderNativeModule::StopSystemAudio(ReactPromise<void> const& promise) noexcept
+    void HappyRecorderNativeModule::CleanupAudio(
+        ReactPromise<void> const& promise) noexcept
     {
-        try {
-            // TODO: Implement system audio stop
+        try
+        {
+            if (m_captureState.audioGraph)
+            {
+                m_captureState.audioGraph.Stop();
+                m_captureState.audioGraph = nullptr;
+            }
+            m_captureState.microphoneNode = nullptr;
+            m_captureState.systemAudioNode = nullptr;
+            m_captureState.backgroundMusicNode = nullptr;
+            m_captureState.isMicrophoneEnabled = false;
+            m_captureState.isSystemAudioEnabled = false;
             promise.Resolve();
-        } catch (hresult_error const& ex) {
-            promise.Reject(ex.message());
+        }
+        catch (...)
+        {
+            promise.Reject(L"Failed to cleanup audio");
         }
     }
 
-    void HappyRecorderNativeModule::LoadBackgroundMusic(std::string const& filePath, ReactPromise<void> const& promise) noexcept
+    void HappyRecorderNativeModule::GetGitCommit(
+        std::string const& repoPath,
+        ReactPromise<std::string> const& promise) noexcept
     {
-        try {
-            // TODO: Implement background music loading
-            promise.Resolve();
-        } catch (hresult_error const& ex) {
-            promise.Reject(ex.message());
-        }
-    }
-
-    void HappyRecorderNativeModule::StartBackgroundMusic(JSValueObject const& config, ReactPromise<void> const& promise) noexcept
-    {
-        try {
-            // TODO: Implement background music start
-            promise.Resolve();
-        } catch (hresult_error const& ex) {
-            promise.Reject(ex.message());
-        }
-    }
-
-    void HappyRecorderNativeModule::StopBackgroundMusic(JSValueObject const& config, ReactPromise<void> const& promise) noexcept
-    {
-        try {
-            // TODO: Implement background music stop
-            promise.Resolve();
-        } catch (hresult_error const& ex) {
-            promise.Reject(ex.message());
-        }
-    }
-
-    void HappyRecorderNativeModule::PauseBackgroundMusic(ReactPromise<void> const& promise) noexcept
-    {
-        try {
-            // TODO: Implement background music pause
-            promise.Resolve();
-        } catch (hresult_error const& ex) {
-            promise.Reject(ex.message());
-        }
-    }
-
-    void HappyRecorderNativeModule::ResumeBackgroundMusic(ReactPromise<void> const& promise) noexcept
-    {
-        try {
-            // TODO: Implement background music resume
-            promise.Resolve();
-        } catch (hresult_error const& ex) {
-            promise.Reject(ex.message());
-        }
-    }
-
-    void HappyRecorderNativeModule::SetAudioVolume(std::string const& source, double volume, ReactPromise<void> const& promise) noexcept
-    {
-        try {
-            // TODO: Implement audio volume
-            promise.Resolve();
-        } catch (hresult_error const& ex) {
-            promise.Reject(ex.message());
-        }
-    }
-
-    void HappyRecorderNativeModule::MuteAudioSource(std::string const& source, bool mute, ReactPromise<void> const& promise) noexcept
-    {
-        try {
-            // TODO: Implement audio mute
-            promise.Resolve();
-        } catch (hresult_error const& ex) {
-            promise.Reject(ex.message());
-        }
-    }
-
-    void HappyRecorderNativeModule::GetAudioLevels(ReactPromise<JSValueObject> const& promise) noexcept
-    {
-        try {
-            JSValueObject levels;
-            levels["microphone"] = 0.0;
-            levels["system"] = 0.0;
-            levels["background"] = 0.0;
-            promise.Resolve(levels);
-        } catch (hresult_error const& ex) {
-            promise.Reject(ex.message());
-        }
-    }
-
-    // Cleanup Methods
-    void HappyRecorderNativeModule::CleanupScreenCapture(ReactPromise<void> const& promise) noexcept
-    {
-        try {
-            // TODO: Cleanup screen capture
-            promise.Resolve();
-        } catch (hresult_error const& ex) {
-            promise.Reject(ex.message());
-        }
-    }
-
-    void HappyRecorderNativeModule::CleanupCamera(ReactPromise<void> const& promise) noexcept
-    {
-        try {
-            // TODO: Cleanup camera
-            promise.Resolve();
-        } catch (hresult_error const& ex) {
-            promise.Reject(ex.message());
-        }
-    }
-
-    void HappyRecorderNativeModule::CleanupAudio(ReactPromise<void> const& promise) noexcept
-    {
-        try {
-            // TODO: Cleanup audio
-            promise.Resolve();
-        } catch (hresult_error const& ex) {
-            promise.Reject(ex.message());
-        }
-    }
-
-    // Git Integration Methods
-    void HappyRecorderNativeModule::GetGitCommit(std::string const& repoPath, ReactPromise<std::string> const& promise) noexcept
-    {
-        try {
-            // Check if .git directory exists
+        try
+        {
             std::filesystem::path gitPath = std::filesystem::path(repoPath) / ".git";
-            if (!std::filesystem::exists(gitPath)) {
+            std::filesystem::path headPath = gitPath / "HEAD";
+            
+            if (!std::filesystem::exists(headPath))
+            {
                 promise.Reject(L"Not a git repository");
                 return;
             }
-
-            // Read HEAD file to get commit hash
-            std::filesystem::path headPath = gitPath / "HEAD";
+            
             std::ifstream headFile(headPath);
-            if (!headFile.is_open()) {
-                promise.Reject(L"Failed to read HEAD");
-                return;
-            }
-
             std::string headContent;
             std::getline(headFile, headContent);
             headFile.close();
-
-            // Parse HEAD content
-            if (headContent.find("ref: ") == 0) {
-                // Symbolic reference
+            
+            if (headContent.find("ref: ") == 0)
+            {
                 std::string refPath = headContent.substr(5);
                 std::filesystem::path refFullPath = gitPath / refPath;
                 std::ifstream refFile(refFullPath);
-                if (!refFile.is_open()) {
-                    promise.Reject(L"Failed to read ref");
-                    return;
-                }
                 std::string commit;
                 std::getline(refFile, commit);
                 refFile.close();
                 
-                if (!commit.empty() && commit.back() == '\n') {
-                    commit.pop_back();
-                }
-                if (commit.length() >= 7) {
+                if (commit.length() >= 7)
+                {
                     promise.Resolve(commit.substr(0, 7));
-                } else {
+                }
+                else
+                {
                     promise.Resolve(commit);
                 }
-            } else {
-                // Direct commit hash
-                if (headContent.length() >= 7) {
+            }
+            else
+            {
+                if (headContent.length() >= 7)
+                {
                     promise.Resolve(headContent.substr(0, 7));
-                } else {
+                }
+                else
+                {
                     promise.Resolve(headContent);
                 }
             }
-        } catch (hresult_error const& ex) {
-            promise.Reject(ex.message());
-        } catch (const std::exception& ex) {
-            promise.Reject(winrt::hstring(L"Git error: ") + winrt::hstring(ex.what()));
+        }
+        catch (...)
+        {
+            promise.Reject(L"Failed to get git commit");
         }
     }
 
-    void HappyRecorderNativeModule::GetGitBranch(std::string const& repoPath, ReactPromise<std::string> const& promise) noexcept
+    void HappyRecorderNativeModule::GetGitBranch(
+        std::string const& repoPath,
+        ReactPromise<std::string> const& promise) noexcept
     {
-        try {
-            // Check if .git directory exists
+        try
+        {
             std::filesystem::path gitPath = std::filesystem::path(repoPath) / ".git";
-            if (!std::filesystem::exists(gitPath)) {
+            std::filesystem::path headPath = gitPath / "HEAD";
+            
+            if (!std::filesystem::exists(headPath))
+            {
                 promise.Reject(L"Not a git repository");
                 return;
             }
-
-            // Read HEAD file to get branch
-            std::filesystem::path headPath = gitPath / "HEAD";
+            
             std::ifstream headFile(headPath);
-            if (!headFile.is_open()) {
-                promise.Reject(L"Failed to read HEAD");
-                return;
-            }
-
             std::string headContent;
             std::getline(headFile, headContent);
             headFile.close();
-
-            // Parse HEAD content
-            if (headContent.find("ref: refs/heads/") == 0) {
+            
+            if (headContent.find("ref: refs/heads/") == 0)
+            {
                 std::string branch = headContent.substr(16);
-                if (!branch.empty() && branch.back() == '\n') {
-                    branch.pop_back();
-                }
                 promise.Resolve(branch);
-            } else {
-                // Detached HEAD state
+            }
+            else
+            {
                 promise.Reject(L"Detached HEAD state");
             }
-        } catch (hresult_error const& ex) {
-            promise.Reject(ex.message());
-        } catch (const std::exception& ex) {
-            promise.Reject(winrt::hstring(L"Git error: ") + winrt::hstring(ex.what()));
+        }
+        catch (...)
+        {
+            promise.Reject(L"Failed to get git branch");
         }
     }
 
-    // Helper Methods
+    HRESULT HappyRecorderNativeModule::InitializeMediaFoundation(
+        const std::wstring& outputPath,
+        UINT32 width,
+        UINT32 height,
+        UINT32 fps)
+    {
+        CleanupMediaFoundation();
+        
+        winrt::com_ptr<IMFAttributes> attributes;
+        RETURN_IF_FAILED(MFCreateAttributes(attributes.put(), 1));
+        RETURN_IF_FAILED(attributes->SetGUID(MF_TRANSCODE_CONTAINERTYPE, MFTranscodeContainerType_MPEG4));
+        
+        RETURN_IF_FAILED(MFCreateSinkWriterFromURL(
+            outputPath.c_str(),
+            nullptr,
+            attributes.get(),
+            m_captureState.sinkWriter.put()
+        ));
+        
+        winrt::com_ptr<IMFMediaType> videoTypeOut;
+        RETURN_IF_FAILED(MFCreateMediaType(videoTypeOut.put()));
+        RETURN_IF_FAILED(videoTypeOut->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video));
+        RETURN_IF_FAILED(videoTypeOut->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_H264));
+        RETURN_IF_FAILED(videoTypeOut->SetUINT32(MF_MT_AVG_BITRATE, 8000000));
+        RETURN_IF_FAILED(videoTypeOut->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive));
+        RETURN_IF_FAILED(MFSetAttributeSize(videoTypeOut.get(), MF_MT_FRAME_SIZE, width, height));
+        RETURN_IF_FAILED(MFSetAttributeRatio(videoTypeOut.get(), MF_MT_FRAME_RATE, fps, 1));
+        RETURN_IF_FAILED(MFSetAttributeRatio(videoTypeOut.get(), MF_MT_PIXEL_ASPECT_RATIO, 1, 1));
+        
+        RETURN_IF_FAILED(m_captureState.sinkWriter->AddStream(videoTypeOut.get(), &m_captureState.videoStreamIndex));
+        
+        winrt::com_ptr<IMFMediaType> videoTypeIn;
+        RETURN_IF_FAILED(MFCreateMediaType(videoTypeIn.put()));
+        RETURN_IF_FAILED(videoTypeIn->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video));
+        RETURN_IF_FAILED(videoTypeIn->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_RGB32));
+        RETURN_IF_FAILED(videoTypeIn->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive));
+        RETURN_IF_FAILED(MFSetAttributeSize(videoTypeIn.get(), MF_MT_FRAME_SIZE, width, height));
+        RETURN_IF_FAILED(MFSetAttributeRatio(videoTypeIn.get(), MF_MT_FRAME_RATE, fps, 1));
+        RETURN_IF_FAILED(MFSetAttributeRatio(videoTypeIn.get(), MF_MT_PIXEL_ASPECT_RATIO, 1, 1));
+        
+        RETURN_IF_FAILED(m_captureState.sinkWriter->SetInputMediaType(
+            m_captureState.videoStreamIndex,
+            videoTypeIn.get(),
+            nullptr
+        ));
+        
+        RETURN_IF_FAILED(m_captureState.sinkWriter->BeginWriting());
+        
+        m_captureState.frameDuration = 10000000LL / fps;
+        
+        return S_OK;
+    }
+
+    HRESULT HappyRecorderNativeModule::WriteVideoFrame(
+        ID3D11Texture2D* texture,
+        LONGLONG timestamp)
+    {
+        if (!m_captureState.sinkWriter || !texture)
+        {
+            return S_OK;
+        }
+        
+        D3D11_TEXTURE2D_DESC desc;
+        texture->GetDesc(&desc);
+        
+        D3D11_TEXTURE2D_DESC stagingDesc = desc;
+        stagingDesc.Usage = D3D11_USAGE_STAGING;
+        stagingDesc.BindFlags = 0;
+        stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+        stagingDesc.MiscFlags = 0;
+        
+        winrt::com_ptr<ID3D11Texture2D> stagingTexture;
+        RETURN_IF_FAILED(m_captureState.d3dDevice->CreateTexture2D(&stagingDesc, nullptr, stagingTexture.put()));
+        
+        m_captureState.d3dContext->CopyResource(stagingTexture.get(), texture);
+        
+        D3D11_MAPPED_SUBRESOURCE mapped;
+        RETURN_IF_FAILED(m_captureState.d3dContext->Map(stagingTexture.get(), 0, D3D11_MAP_READ, 0, &mapped));
+        
+        UINT32 dataSize = mapped.RowPitch * desc.Height;
+        
+        winrt::com_ptr<IMFMediaBuffer> buffer;
+        RETURN_IF_FAILED(MFCreateMemoryBuffer(dataSize, buffer.put()));
+        
+        BYTE* data = nullptr;
+        RETURN_IF_FAILED(buffer->Lock(&data, nullptr, nullptr));
+        
+        memcpy(data, mapped.pData, dataSize);
+        
+        buffer->Unlock();
+        buffer->SetCurrentLength(dataSize);
+        
+        m_captureState.d3dContext->Unmap(stagingTexture.get(), 0);
+        
+        winrt::com_ptr<IMFSample> sample;
+        RETURN_IF_FAILED(MFCreateSample(sample.put()));
+        RETURN_IF_FAILED(sample->AddBuffer(buffer.get()));
+        RETURN_IF_FAILED(sample->SetSampleTime(timestamp));
+        RETURN_IF_FAILED(sample->SetSampleDuration(m_captureState.frameDuration));
+        
+        return m_captureState.sinkWriter->WriteSample(m_captureState.videoStreamIndex, sample.get());
+    }
+
+    void HappyRecorderNativeModule::CleanupMediaFoundation()
+    {
+        if (m_captureState.sinkWriter)
+        {
+            m_captureState.sinkWriter->Finalize();
+            m_captureState.sinkWriter = nullptr;
+        }
+    }
+
     void HappyRecorderNativeModule::EmitStatusUpdate()
     {
-        if (m_captureState.isRecording) {
+        if (m_captureState.isRecording)
+        {
             auto duration = std::chrono::duration_cast<std::chrono::seconds>(
-                std::chrono::steady_clock::now() - m_captureState.startTime
+                std::chrono::steady_clock::now() - m_captureState.startTime - m_captureState.totalPausedDuration
             ).count();
             
             JSValueObject status;
@@ -861,47 +1126,7 @@ namespace winrt::HappyRecorderNative
             status["isRecording"] = true;
             status["isPaused"] = m_captureState.isPaused;
             
-            // Emit event to React Native
             m_reactContext.EmitJSEvent(L"onStatusUpdate", status);
         }
-    }
-
-    void HappyRecorderNativeModule::UpdateFileSize()
-    {
-        try {
-            auto fileTask = StorageFile::GetFileFromPathAsync(m_captureState.outputPath);
-            fileTask.Completed([this](auto&& fileResult, auto&&) {
-                try {
-                    auto file = fileResult.GetResults();
-                    auto sizeTask = file.GetBasicPropertiesAsync();
-                    sizeTask.Completed([this](auto&& sizeResult, auto&&) {
-                        try {
-                            auto properties = sizeResult.GetResults();
-                            m_captureState.fileSize = properties.Size();
-                        } catch (...) {
-                            // Ignore file size errors
-                        }
-                    });
-                } catch (...) {
-                    // Ignore file errors
-                }
-            });
-        } catch (...) {
-            // Ignore errors
-        }
-    }
-
-    void HappyRecorderNativeModule::RejectWithError(ReactPromise<void> const& promise, HRESULT hr, const std::string& message)
-    {
-        wchar_t errorMsg[256];
-        swprintf_s(errorMsg, L"Error 0x%08X: %S", hr, message.c_str());
-        promise.Reject(winrt::hstring(errorMsg));
-    }
-
-    void HappyRecorderNativeModule::RejectWithError(ReactPromise<JSValueObject> const& promise, HRESULT hr, const std::string& message)
-    {
-        wchar_t errorMsg[256];
-        swprintf_s(errorMsg, L"Error 0x%08X: %S", hr, message.c_str());
-        promise.Reject(winrt::hstring(errorMsg));
     }
 }

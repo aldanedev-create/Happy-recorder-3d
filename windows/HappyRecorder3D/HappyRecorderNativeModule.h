@@ -2,33 +2,106 @@
 
 #include "pch.h"
 #include <NativeModules.h>
+#include <winrt/Windows.Graphics.Capture.h>
+#include <winrt/Windows.Graphics.DirectX.Direct3D11.h>
+#include <winrt/Windows.Media.Capture.h>
+#include <winrt/Windows.Media.MediaProperties.h>
+#include <winrt/Windows.Media.Audio.h>
+#include <winrt/Windows.Media.Devices.h>
+#include <winrt/Windows.Devices.Enumeration.h>
+#include <winrt/Windows.Storage.h>
+#include <windows.graphics.capture.interop.h>
+#include <windows.graphics.directx.direct3d11.interop.h>
+#include <d3d11.h>
+#include <mfapi.h>
+#include <mfidl.h>
+#include <mfreadwrite.h>
+#include <wrl/client.h>
+#include <chrono>
+#include <mutex>
+#include <atomic>
+#include <thread>
+#include <vector>
 
 using namespace winrt::Microsoft::ReactNative;
+using namespace winrt::Windows::Graphics::Capture;
+using namespace winrt::Windows::Graphics::DirectX::Direct3D11;
+using namespace winrt::Windows::Media::Capture;
+using namespace winrt::Windows::Media::MediaProperties;
+using namespace winrt::Windows::Media::Audio;
+using namespace winrt::Windows::Media::Devices;
+using namespace winrt::Windows::Devices::Enumeration;
+using namespace winrt::Windows::Storage;
+using namespace Microsoft::WRL;
 
-namespace winrt::HappyRecorderNative
+namespace winrt::HappyRecorder3D::implementation
 {
-    // Structure to hold capture state
     struct CaptureState
     {
         bool isInitialized = false;
         bool isRecording = false;
         bool isPaused = false;
-        winrt::hstring outputPath;
-        winrt::Windows::Media::Capture::MediaCapture mediaCapture{ nullptr };
-        winrt::Windows::Media::Capture::MediaCapture cameraCapture{ nullptr };
-        winrt::Windows::Media::Audio::AudioGraph audioGraph{ nullptr };
-        winrt::Windows::Media::Audio::AudioDeviceInputNode microphoneNode{ nullptr };
-        winrt::Windows::Media::Audio::AudioDeviceOutputNode systemAudioNode{ nullptr };
-        std::chrono::steady_clock::time_point startTime;
+        bool isMicrophoneEnabled = false;
+        bool isSystemAudioEnabled = false;
+        bool isCameraEnabled = false;
+        
+        std::wstring outputPath;
+        double fps = 30.0;
         uint64_t fileSize = 0;
-        double fps = 60.0;
-        std::string quality = "1080p";
+        
+        GraphicsCaptureItem captureItem{ nullptr };
+        Direct3D11CaptureFramePool framePool{ nullptr };
+        GraphicsCaptureSession captureSession{ nullptr };
+        
+        winrt::com_ptr<ID3D11Device> d3dDevice;
+        winrt::com_ptr<ID3D11DeviceContext> d3dContext;
+        
+        winrt::com_ptr<IMFSinkWriter> sinkWriter;
+        DWORD videoStreamIndex = 0;
+        DWORD audioStreamIndex = 0;
+        LONGLONG frameDuration = 0;
+        
+        MediaCapture mediaCapture{ nullptr };
+        MediaCapture cameraCapture{ nullptr };
+        AudioGraph audioGraph{ nullptr };
+        AudioDeviceInputNode microphoneNode{ nullptr };
+        AudioDeviceOutputNode systemAudioNode{ nullptr };
+        AudioFileInputNode backgroundMusicNode{ nullptr };
+        
+        std::chrono::steady_clock::time_point startTime;
+        std::chrono::steady_clock::time_point pauseTime;
+        std::chrono::milliseconds totalPausedDuration{ 0 };
+        
+        void Reset()
+        {
+            isInitialized = false;
+            isRecording = false;
+            isPaused = false;
+            isMicrophoneEnabled = false;
+            isSystemAudioEnabled = false;
+            isCameraEnabled = false;
+            fileSize = 0;
+            captureItem = nullptr;
+            framePool = nullptr;
+            captureSession = nullptr;
+            d3dDevice = nullptr;
+            d3dContext = nullptr;
+            sinkWriter = nullptr;
+            mediaCapture = nullptr;
+            cameraCapture = nullptr;
+            audioGraph = nullptr;
+            microphoneNode = nullptr;
+            systemAudioNode = nullptr;
+            backgroundMusicNode = nullptr;
+        }
     };
 
-    // This is the public JavaScript module name used by nativeService.
     REACT_MODULE(HappyRecorderNative)
     struct HappyRecorderNativeModule
     {
+        HappyRecorderNativeModule() = default;
+        ~HappyRecorderNativeModule();
+
         REACT_INIT(Initialize)
         void Initialize(ReactContext const& reactContext) noexcept;
 
@@ -51,7 +124,7 @@ namespace winrt::HappyRecorderNative
         REACT_METHOD(GetStatus)
         void GetStatus(ReactPromise<JSValueObject> const& promise) noexcept;
 
-        // Screen Capture
+        // Display/Window Methods
         REACT_METHOD(GetDisplays)
         void GetDisplays(ReactPromise<JSValueArray> const& promise) noexcept;
 
@@ -67,7 +140,7 @@ namespace winrt::HappyRecorderNative
         REACT_METHOD(AddClickEffect)
         void AddClickEffect(JSValueObject const& config, ReactPromise<void> const& promise) noexcept;
 
-        // Camera
+        // Camera Methods
         REACT_METHOD(GetCameraDevices)
         void GetCameraDevices(ReactPromise<JSValueArray> const& promise) noexcept;
 
@@ -80,22 +153,10 @@ namespace winrt::HappyRecorderNative
         REACT_METHOD(StopCamera)
         void StopCamera(ReactPromise<void> const& promise) noexcept;
 
-        REACT_METHOD(SetCameraPosition)
-        void SetCameraPosition(std::string const& position, ReactPromise<void> const& promise) noexcept;
-
-        REACT_METHOD(SetCameraSize)
-        void SetCameraSize(double width, double height, ReactPromise<void> const& promise) noexcept;
-
-        REACT_METHOD(SetCameraShape)
-        void SetCameraShape(std::string const& shape, ReactPromise<void> const& promise) noexcept;
-
-        REACT_METHOD(ToggleCameraBorder)
-        void ToggleCameraBorder(bool enabled, ReactPromise<void> const& promise) noexcept;
-
         REACT_METHOD(TakePhoto)
         void TakePhoto(ReactPromise<std::string> const& promise) noexcept;
 
-        // Audio
+        // Audio Methods
         REACT_METHOD(GetAudioDevices)
         void GetAudioDevices(ReactPromise<JSValueArray> const& promise) noexcept;
 
@@ -124,24 +185,12 @@ namespace winrt::HappyRecorderNative
         void StartBackgroundMusic(JSValueObject const& config, ReactPromise<void> const& promise) noexcept;
 
         REACT_METHOD(StopBackgroundMusic)
-        void StopBackgroundMusic(JSValueObject const& config, ReactPromise<void> const& promise) noexcept;
-
-        REACT_METHOD(PauseBackgroundMusic)
-        void PauseBackgroundMusic(ReactPromise<void> const& promise) noexcept;
-
-        REACT_METHOD(ResumeBackgroundMusic)
-        void ResumeBackgroundMusic(ReactPromise<void> const& promise) noexcept;
+        void StopBackgroundMusic(ReactPromise<void> const& promise) noexcept;
 
         REACT_METHOD(SetAudioVolume)
         void SetAudioVolume(std::string const& source, double volume, ReactPromise<void> const& promise) noexcept;
 
-        REACT_METHOD(MuteAudioSource)
-        void MuteAudioSource(std::string const& source, bool mute, ReactPromise<void> const& promise) noexcept;
-
-        REACT_METHOD(GetAudioLevels)
-        void GetAudioLevels(ReactPromise<JSValueObject> const& promise) noexcept;
-
-        // Cleanup
+        // Cleanup Methods
         REACT_METHOD(CleanupScreenCapture)
         void CleanupScreenCapture(ReactPromise<void> const& promise) noexcept;
 
@@ -151,7 +200,7 @@ namespace winrt::HappyRecorderNative
         REACT_METHOD(CleanupAudio)
         void CleanupAudio(ReactPromise<void> const& promise) noexcept;
 
-        // Git Integration
+        // Git Methods
         REACT_METHOD(GetGitCommit)
         void GetGitCommit(std::string const& repoPath, ReactPromise<std::string> const& promise) noexcept;
 
@@ -161,16 +210,12 @@ namespace winrt::HappyRecorderNative
     private:
         ReactContext m_reactContext;
         CaptureState m_captureState;
+        std::mutex m_stateMutex;
         
-        // Helper methods
-        winrt::Windows::Graphics::SizeInt32 GetScreenSize();
-        std::vector<DeviceInformation> EnumerateDevices(DeviceClass deviceClass);
-        winrt::hstring GetCurrentTimestamp();
+        HRESULT InitializeMediaFoundation(const std::wstring& outputPath, UINT32 width, UINT32 height, UINT32 fps);
+        HRESULT WriteVideoFrame(ID3D11Texture2D* texture, LONGLONG timestamp);
+        HRESULT WriteAudioFrame(const float* audioData, size_t sampleCount, LONGLONG timestamp);
+        void CleanupMediaFoundation();
         void EmitStatusUpdate();
-        void UpdateFileSize();
-        
-        // Error handling
-        void RejectWithError(ReactPromise<void> const& promise, HRESULT hr, const std::string& message);
-        void RejectWithError(ReactPromise<JSValueObject> const& promise, HRESULT hr, const std::string& message);
     };
 }
