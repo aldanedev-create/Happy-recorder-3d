@@ -1,4 +1,6 @@
-import * as RNFS from 'react-native-fs';
+import RNFS from './safeRNFS';
+import type { StatResult } from 'react-native-fs';
+import { Buffer } from 'buffer';
 
 export interface FileInfo {
   name: string;
@@ -373,7 +375,7 @@ class FilesService {
   /**
    * Get file stats
    */
-  async getFileStats(filePath: string): Promise<RNFS.StatResult | null> {
+  async getFileStats(filePath: string): Promise<StatResult | null> {
     try {
       const exists = await RNFS.exists(filePath);
       if (!exists) return null;

@@ -39,7 +39,9 @@ const App = (): React.ReactElement => {
     void storageService.initialize().catch((error) =>
       console.error('Unable to initialize app storage:', error)
     );
-    void nativeService.getSystemInfo();
+    void nativeService.getSystemInfo().catch((error: unknown) =>
+      console.error('Unable to fetch system info:', error)
+    );
   }, []);
 
   return (

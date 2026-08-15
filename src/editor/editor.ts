@@ -1,5 +1,4 @@
 import { NativeModules, Platform } from 'react-native';
-import * as RNFS from 'react-native-fs';
 import { storageService } from '../services/storage';
 import { filesService } from '../services/files';
 import { timelineManager } from './timeline';

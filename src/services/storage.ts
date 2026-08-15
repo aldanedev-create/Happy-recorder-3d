@@ -1,4 +1,4 @@
-import * as RNFS from 'react-native-fs';
+import RNFS from './safeRNFS';
 import { Platform } from 'react-native';
 import { AppSettings, DEFAULT_SETTINGS } from '../data/settings';
 
@@ -683,6 +683,41 @@ class StorageService {
     } catch (error) {
       console.error('Failed to load tutorial progress:', error);
       return [];
+    }
+  }
+
+  /**
+   * Log a fatal JS error to disk. Deliberately does NOT depend on
+   * initialize() having run yet — computes its own base path — because
+   * the whole point is to capture crashes that happen before or during
+   * app startup (e.g. inside the root ErrorBoundary), which is exactly
+   * when initialize() may not have finished.
+   */
+  async logCrash(error: Error, extra?: Record<string, unknown>): Promise<void> {
+    try {
+      const basePath = Platform.OS === 'windows'
+        ? RNFS.DocumentDirectoryPath || RNFS.ExternalDirectoryPath || ''
+        : RNFS.DocumentDirectoryPath || '';
+      const crashDir = `${basePath}/${this.config.appName}/Crashes`;
+
+      const dirExists = await RNFS.exists(crashDir);
+      if (!dirExists) {
+        await RNFS.mkdir(crashDir);
+      }
+
+      const entry = {
+        timestamp: new Date().toISOString(),
+        message: error.message,
+        stack: error.stack,
+        ...extra,
+      };
+
+      const filePath = `${crashDir}/crash-${Date.now()}.json`;
+      await RNFS.writeFile(filePath, JSON.stringify(entry, null, 2), 'utf8');
+    } catch (loggingError) {
+      // Logging the crash must never itself throw and mask the
+      // original error — swallow and fall back to console only.
+      console.error('Failed to write crash log:', loggingError);
     }
   }
 }
