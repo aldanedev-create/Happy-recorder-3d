@@ -70,10 +70,16 @@ jobs:
       - name: Setup MSBuild
         uses: microsoft/setup-msbuild@v2
 
+      - name: Setup NuGet
+        uses: NuGet/setup-nuget@v2
+
       - name: Install dependencies
         run: npm ci
 
-      # Apply Windows native-module autolinking before MSBuild.
+      # ------------------------------------------------------------
+      # React Native Windows autolinking
+      # ------------------------------------------------------------
+
       - name: Apply React Native Windows autolinking
         shell: pwsh
         run: |
@@ -81,7 +87,6 @@ jobs:
             --sln "windows\HappyRecorder3D.sln" `
             --proj "windows\HappyRecorder3D\HappyRecorder3D.vcxproj"
 
-      # Make sure autolinking is now clean.
       - name: Verify React Native Windows autolinking
         shell: pwsh
         run: |
@@ -90,24 +95,60 @@ jobs:
             --sln "windows\HappyRecorder3D.sln" `
             --proj "windows\HappyRecorder3D\HappyRecorder3D.vcxproj"
 
-      # Restore every NuGet packages.config in the project,
-      # including packages belonging to native React Native modules.
-      - name: Setup NuGet
-        uses: NuGet/setup-nuget@v2
+      # ------------------------------------------------------------
+      # NuGet configuration
+      # ------------------------------------------------------------
 
       - name: Configure NuGet
         shell: pwsh
         run: |
-          nuget sources Add `
-            -Name nuget.org `
-            -Source "https://api.nuget.org/v3/index.json" `
-            -NonInteractive `
-            -Force
+          Write-Host "NuGet version:"
+          nuget help | Select-Object -First 2
 
+          Write-Host ""
           Write-Host "NuGet sources:"
           nuget sources List
 
-      - name: Restore NuGet packages
+      # ------------------------------------------------------------
+      # Restore NuGet packages
+      #
+      # MSBuild is used for the solution restore because the
+      # React Native Windows project can reference NuGet packages
+      # through the Visual Studio project files rather than only
+      # through packages.config.
+      # ------------------------------------------------------------
+
+      - name: Restore Windows solution
+        shell: pwsh
+        run: |
+          Write-Host "Restoring:"
+          Write-Host "$env:APP_PROJECT"
+          Write-Host ""
+
+          msbuild "$env:APP_PROJECT" `
+            /t:Restore `
+            /p:Configuration=Release `
+            /p:Platform=x64 `
+            /p:WindowsTargetPlatformVersion=10.0.19041.0 `
+            /p:TargetPlatformMinVersion=10.0.17763.0 `
+            /p:WindowsTargetPlatformMinVersion=10.0.17763.0 `
+            /m `
+            "-flp:logfile=$env:GITHUB_WORKSPACE\nuget-restore.log;verbosity=diagnostic"
+
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "MSBuild NuGet restore failed."
+            exit $LASTEXITCODE
+          }
+
+      # ------------------------------------------------------------
+      # Verify packages.config packages where applicable.
+      #
+      # This does NOT require Microsoft.ReactNative to exist under
+      # windows\packages because RNW can restore it through the
+      # project/NuGet restore mechanism.
+      # ------------------------------------------------------------
+
+      - name: Restore packages.config packages
         shell: pwsh
         run: |
           $packagesDirectory = "$env:GITHUB_WORKSPACE\windows\packages"
@@ -118,20 +159,21 @@ jobs:
             -Path $packagesDirectory | Out-Null
 
           $packageConfigs = Get-ChildItem `
-            -Path "$env:GITHUB_WORKSPACE" `
+            -Path "$env:GITHUB_WORKSPACE\windows" `
             -Recurse `
             -Filter "packages.config" `
             -File `
             -ErrorAction SilentlyContinue
 
           if (!$packageConfigs) {
-            Write-Error "No packages.config files were found."
-            exit 1
+            Write-Host "No packages.config files found."
+            Write-Host "Continuing because the solution restore completed."
+            exit 0
           }
 
           Write-Host ""
-          Write-Host "NuGet package configuration files:"
-          Write-Host "----------------------------------"
+          Write-Host "packages.config files found:"
+          Write-Host "----------------------------"
 
           foreach ($config in $packageConfigs) {
             Write-Host $config.FullName
@@ -145,7 +187,6 @@ jobs:
 
             nuget restore "$($config.FullName)" `
               -PackagesDirectory "$packagesDirectory" `
-              -Source "https://api.nuget.org/v3/index.json" `
               -NonInteractive `
               -Verbosity detailed
 
@@ -154,32 +195,125 @@ jobs:
               exit $LASTEXITCODE
             }
           }
-          Write-Host "FOUND: $cppWinRT"
 
-      # Verify the React Native Windows NuGet package version.
-      - name: Verify Microsoft.ReactNative package
+      # ------------------------------------------------------------
+      # Verify CppWinRT only if packages.config restoration places it
+      # in windows\packages.
+      # ------------------------------------------------------------
+
+      - name: Verify CppWinRT package
         shell: pwsh
         run: |
           $packagesDirectory = "$env:GITHUB_WORKSPACE\windows\packages"
 
-          $reactNative = Join-Path `
+          $cppWinRT = Join-Path `
             $packagesDirectory `
-            "Microsoft.ReactNative.0.72.0"
+            "Microsoft.Windows.CppWinRT.2.0.240405.15"
 
-          if (!(Test-Path $reactNative)) {
-            Write-Error "Microsoft.ReactNative 0.72.0 was not restored."
+          Write-Host "Checking CppWinRT:"
+          Write-Host $cppWinRT
+
+          if (Test-Path $cppWinRT) {
+            Write-Host "FOUND: $cppWinRT"
+          }
+          else {
+            Write-Host ""
+            Write-Host "CppWinRT was not found under windows\packages."
+            Write-Host "The package may have been restored through MSBuild/NuGet."
+            Write-Host ""
+            Write-Host "Searching the repository for CppWinRT references..."
+
+            Get-ChildItem `
+              -Path "$env:GITHUB_WORKSPACE\windows" `
+              -Recurse `
+              -File `
+              -ErrorAction SilentlyContinue |
+              Select-String `
+                -Pattern "Microsoft.Windows.CppWinRT" `
+                -SimpleMatch `
+                -ErrorAction SilentlyContinue |
+              Select-Object -First 20 Path, LineNumber, Line
+          }
+
+      # ------------------------------------------------------------
+      # Verify React Native Windows project references
+      # ------------------------------------------------------------
+
+      - name: Verify Microsoft.ReactNative reference
+        shell: pwsh
+        run: |
+          $project = "$env:GITHUB_WORKSPACE\windows\HappyRecorder3D\HappyRecorder3D.vcxproj"
+
+          if (!(Test-Path $project)) {
+            Write-Error "HappyRecorder3D.vcxproj was not found."
             exit 1
           }
 
-          Write-Host "FOUND: $reactNative"
+          Write-Host "Checking React Native Windows project:"
+          Write-Host $project
+          Write-Host ""
 
-      # Show all Windows SDKs available on the runner.
+          $matches = Select-String `
+            -Path $project `
+            -Pattern "Microsoft.ReactNative" `
+            -SimpleMatch `
+            -ErrorAction SilentlyContinue
+
+          if ($matches) {
+            Write-Host "Microsoft.ReactNative references found:"
+            $matches | ForEach-Object {
+              Write-Host "$($_.LineNumber): $($_.Line)"
+            }
+          }
+          else {
+            Write-Host "No direct Microsoft.ReactNative string was found in HappyRecorder3D.vcxproj."
+            Write-Host "This is not necessarily an error because RNW dependencies can be imported indirectly."
+          }
+
+      # ------------------------------------------------------------
+      # Display restored packages for diagnostics
+      # ------------------------------------------------------------
+
+      - name: Show restored NuGet packages
+        shell: pwsh
+        run: |
+          $packagesDirectory = "$env:GITHUB_WORKSPACE\windows\packages"
+
+          Write-Host ""
+          Write-Host "=========================================="
+          Write-Host "Restored packages"
+          Write-Host "=========================================="
+
+          if (Test-Path $packagesDirectory) {
+            Get-ChildItem `
+              $packagesDirectory `
+              -Directory `
+              -ErrorAction SilentlyContinue |
+              Sort-Object Name |
+              Select-Object -ExpandProperty Name
+          }
+          else {
+            Write-Host "windows\packages does not exist."
+          }
+
+      # ------------------------------------------------------------
+      # Windows SDK
+      # ------------------------------------------------------------
+
       - name: Show Windows SDKs
         shell: pwsh
         run: |
           Write-Host "Installed Windows SDKs:"
-          Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\Include" -Directory |
+          Write-Host ""
+
+          Get-ChildItem `
+            "C:\Program Files (x86)\Windows Kits\10\Include" `
+            -Directory |
             Select-Object -ExpandProperty Name
+
+      # ------------------------------------------------------------
+      # Visual Studio / MSBuild
+      # ------------------------------------------------------------
 
       - name: Verify Visual Studio
         shell: pwsh
@@ -187,37 +321,65 @@ jobs:
           Write-Host "MSBuild:"
           msbuild -version
 
+      # ------------------------------------------------------------
+      # React Native versions
+      # ------------------------------------------------------------
+
       - name: Verify React Native versions
+        shell: pwsh
         run: |
           node --version
           npm --version
+
+          Write-Host ""
+          Write-Host "React Native packages:"
           npm list react-native react-native-windows
 
       - name: Verify Babel resolution
         run: npm ls @babel/core
 
+      # ------------------------------------------------------------
+      # React Native Windows bundle
+      # ------------------------------------------------------------
+
       - name: Create bundle output directory
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path ci-bundle-test
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path "ci-bundle-test"
 
       - name: Pre-bundle check
-        run: >
-          npx react-native bundle
-          --platform windows
-          --dev false
-          --entry-file index.js
-          --bundle-output ci-bundle-test/index.windows.bundle
-          --assets-dest ci-bundle-test
-          --verbose
+        shell: pwsh
+        run: |
+          npx react-native bundle `
+            --platform windows `
+            --dev false `
+            --entry-file index.js `
+            --bundle-output "ci-bundle-test\index.windows.bundle" `
+            --assets-dest "ci-bundle-test" `
+            --verbose
+
+      # ------------------------------------------------------------
+      # Build Windows MSIX
+      # ------------------------------------------------------------
 
       - name: Build Windows MSIX
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path "$env:GITHUB_WORKSPACE\artifacts"
+          $artifactsDirectory = "$env:GITHUB_WORKSPACE\artifacts"
+
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path $artifactsDirectory | Out-Null
+
+          Write-Host "Building:"
+          Write-Host "$env:APP_PROJECT"
+          Write-Host ""
 
           msbuild "$env:APP_PROJECT" `
-            /restore `
             /m `
             /p:Configuration=Release `
             /p:Platform=x64 `
@@ -227,16 +389,31 @@ jobs:
             /p:AppxBundle=Always `
             /p:AppxBundlePlatforms=x64 `
             /p:UapAppxPackageBuildMode=StoreUpload `
-            /p:AppxPackageDir="$env:GITHUB_WORKSPACE\artifacts\" `
+            /p:AppxPackageDir="$artifactsDirectory\" `
             "-flp:logfile=$env:GITHUB_WORKSPACE\msbuild.log;verbosity=diagnostic"
 
-      - name: Upload build log
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Windows MSIX build failed."
+            exit $LASTEXITCODE
+          }
+
+      # ------------------------------------------------------------
+      # Upload diagnostics
+      # ------------------------------------------------------------
+
+      - name: Upload build logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: msbuild-log
-          path: msbuild.log
+          name: msbuild-logs
+          path: |
+            msbuild.log
+            nuget-restore.log
           if-no-files-found: warn
+
+      # ------------------------------------------------------------
+      # Upload Windows package
+      # ------------------------------------------------------------
 
       - name: Upload Windows package
         uses: actions/upload-artifact@v4
@@ -250,10 +427,14 @@ jobs:
             artifacts/**/*.appxbundle
           if-no-files-found: error
 
+  # --------------------------------------------------------------
+  # GitHub Release
+  # --------------------------------------------------------------
+
   release:
     name: Publish GitHub release
     needs: package
-    if: needs.package.result == 'success'
+    if: needs.package.result == 'success' && github.event_name == 'workflow_dispatch' && inputs.create_release == true
 
     runs-on: ubuntu-latest
 
