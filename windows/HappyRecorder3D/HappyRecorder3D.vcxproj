@@ -80,6 +80,11 @@
       <AdditionalOptions>%(AdditionalOptions) /bigobj</AdditionalOptions>
       <DisableSpecificWarnings>4453;28204</DisableSpecificWarnings>
     </ClCompile>
+    <Link>
+      <!-- Required by HappyRecorderNativeModule.cpp: Windows.Graphics.Capture +
+           Direct3D11/D2D/DWrite interop for screen capture. -->
+      <AdditionalDependencies>d3d11.lib;d2d1.lib;dwrite.lib;windowsapp.lib;%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)'=='Debug'">
     <ClCompile>
@@ -98,6 +103,7 @@
     </ClInclude>
     <ClInclude Include="ReactPackageProvider.h" />
     <ClInclude Include="AutolinkedNativeModules.g.h" />
+    <ClInclude Include="HappyRecorderNativeModule.h" />
     <ClInclude Include="pch.h" />
     <ClInclude Include="App.h">
       <DependentUpon>App.xaml</DependentUpon>
@@ -129,6 +135,7 @@
     </ClCompile>
     <ClCompile Include="ReactPackageProvider.cpp" />
     <ClCompile Include="AutolinkedNativeModules.g.cpp" />
+    <ClCompile Include="HappyRecorderNativeModule.cpp" />
     <ClCompile Include="pch.cpp">
       <PrecompiledHeader>Create</PrecompiledHeader>
     </ClCompile>
