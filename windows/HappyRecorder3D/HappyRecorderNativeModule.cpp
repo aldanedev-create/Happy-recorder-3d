@@ -11,6 +11,17 @@
 #pragma comment(lib, "dxgi.lib")
 #pragma comment(lib, "mmdevapi.lib")
 
+// Scoped to this .cpp only (not the header) -- see HappyRecorderNativeModule.h
+// for why these can't live at header scope.
+using namespace winrt::Windows::Graphics::Capture;
+using namespace winrt::Windows::Graphics::DirectX::Direct3D11;
+using namespace winrt::Windows::Media::Capture;
+using namespace winrt::Windows::Media::MediaProperties;
+using namespace winrt::Windows::Media::Audio;
+using namespace winrt::Windows::Media::Devices;
+using namespace winrt::Windows::Devices::Enumeration;
+using namespace winrt::Windows::Storage;
+
 namespace winrt::HappyRecorder3D::implementation
 {
     HappyRecorderNativeModule::~HappyRecorderNativeModule()

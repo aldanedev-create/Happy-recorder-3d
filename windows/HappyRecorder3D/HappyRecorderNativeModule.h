@@ -23,14 +23,15 @@
 #include <vector>
 
 using namespace winrt::Microsoft::ReactNative;
-using namespace winrt::Windows::Graphics::Capture;
-using namespace winrt::Windows::Graphics::DirectX::Direct3D11;
-using namespace winrt::Windows::Media::Capture;
-using namespace winrt::Windows::Media::MediaProperties;
-using namespace winrt::Windows::Media::Audio;
-using namespace winrt::Windows::Media::Devices;
-using namespace winrt::Windows::Devices::Enumeration;
-using namespace winrt::Windows::Storage;
+// Deliberately no other `using namespace winrt::Windows::...;` here.
+// This header is #included by RNW's generated module.g.cpp, which
+// aggregates every REACT_MODULE header from the whole project into one
+// translation unit -- a broad using-namespace here leaks into that file
+// (and anything else that includes this header), causing ambiguous-symbol
+// errors in unrelated code (e.g. Windows.Storage.Provider.h). Types below
+// are fully qualified instead. The .cpp file has its own local
+// using-namespace block, which is safe since .cpp files aren't included
+// elsewhere.
 // DO NOT use: using namespace Microsoft::WRL;
 
 namespace winrt::HappyRecorder3D::implementation
@@ -48,9 +49,9 @@ namespace winrt::HappyRecorder3D::implementation
         double fps = 30.0;
         uint64_t fileSize = 0;
         
-        GraphicsCaptureItem captureItem{ nullptr };
-        Direct3D11CaptureFramePool framePool{ nullptr };
-        GraphicsCaptureSession captureSession{ nullptr };
+        winrt::Windows::Graphics::Capture::GraphicsCaptureItem captureItem{ nullptr };
+        winrt::Windows::Graphics::Capture::Direct3D11CaptureFramePool framePool{ nullptr };
+        winrt::Windows::Graphics::Capture::GraphicsCaptureSession captureSession{ nullptr };
         
         winrt::com_ptr<ID3D11Device> d3dDevice;
         winrt::com_ptr<ID3D11DeviceContext> d3dContext;
@@ -60,11 +61,11 @@ namespace winrt::HappyRecorder3D::implementation
         DWORD audioStreamIndex = 0;
         LONGLONG frameDuration = 0;
         
-        MediaCapture cameraCapture{ nullptr };
-        AudioGraph audioGraph{ nullptr };
-        AudioDeviceInputNode microphoneNode{ nullptr };
-        AudioDeviceOutputNode systemAudioNode{ nullptr };
-        AudioFileInputNode backgroundMusicNode{ nullptr };
+        winrt::Windows::Media::Capture::MediaCapture cameraCapture{ nullptr };
+        winrt::Windows::Media::Audio::AudioGraph audioGraph{ nullptr };
+        winrt::Windows::Media::Audio::AudioDeviceInputNode microphoneNode{ nullptr };
+        winrt::Windows::Media::Audio::AudioDeviceOutputNode systemAudioNode{ nullptr };
+        winrt::Windows::Media::Audio::AudioFileInputNode backgroundMusicNode{ nullptr };
         
         std::chrono::steady_clock::time_point startTime;
         std::chrono::steady_clock::time_point pauseTime;
