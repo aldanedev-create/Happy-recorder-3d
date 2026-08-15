@@ -81,7 +81,9 @@ buck-out/
 # shipping a build where AutolinkedNativeModules.g.cpp registered zero
 # packages -- react-native-fs, react-native-video, etc. were never
 # actually linked into the native app, causing the blank-launch crash.
-windows/**/AutolinkedNativeModules.g.*
+windows/**/AutolinkedNativeModules.g.cpp
+windows/**/AutolinkedNativeModules.g.props
+windows/**/AutolinkedNativeModules.g.targets
 windows/x64/
 windows/**/Debug/
 windows/**/Release/
