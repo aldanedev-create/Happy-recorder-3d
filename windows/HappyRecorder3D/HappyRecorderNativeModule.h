@@ -133,15 +133,15 @@ namespace winrt::HappyRecorder3D::implementation
         REACT_METHOD(GetStatus)
         void GetStatus(ReactPromise<JSValueObject> const& promise) noexcept;
 
-        // Display/Window Methods
-        REACT_METHOD(GetDisplays)
-        void GetDisplays(ReactPromise<JSValueArray> const& promise) noexcept;
-
-        REACT_METHOD(GetWindows)
-        void GetWindows(ReactPromise<JSValueArray> const& promise) noexcept;
-
-        REACT_METHOD(GetCursorPosition)
-        void GetCursorPosition(ReactPromise<JSValueObject> const& promise) noexcept;
+        // Capture target selection. This app runs as an AppContainer UWP
+        // package (see Package.appxmanifest / AppContainerApplication),
+        // which cannot call desktop-only Win32 APIs like EnumWindows or
+        // EnumDisplayMonitors -- those aren't even declared for this app
+        // type. GraphicsCapturePicker is the UWP-safe equivalent: it shows
+        // the OS's own picker UI and hands back a ready-to-use capture item,
+        // so no manual enumeration is needed at all.
+        REACT_METHOD(PickCaptureItem)
+        void PickCaptureItem(ReactPromise<void> const& promise) noexcept;
 
         REACT_METHOD(HighlightCursor)
         void HighlightCursor(JSValueObject const& config, ReactPromise<void> const& promise) noexcept;

@@ -10,9 +10,11 @@ export interface NativeModule {
   getStatus: () => Promise<any>;
 
   // Screen Capture
-  getDisplays: () => Promise<any[]>;
-  getWindows: () => Promise<any[]>;
-  getCursorPosition: () => Promise<{ x: number; y: number }>;
+  // Shows the OS's own capture picker (window/monitor thumbnails) and
+  // stores the user's selection natively -- there's no manual
+  // enumeration API, since desktop window/monitor enumeration isn't
+  // available to this app's AppContainer (UWP) sandbox.
+  pickCaptureItem: () => Promise<void>;
   highlightCursor: (config: any) => Promise<void>;
   addClickEffect: (config: any) => Promise<void>;
 
@@ -99,14 +101,7 @@ class NativeService {
       getStatus: () => Promise.resolve({ duration: 0, fileSize: 0 }),
 
       // Screen Capture
-      getDisplays: () => Promise.resolve([
-        { id: 1, name: 'Display 1', width: 1920, height: 1080, refreshRate: 60, isPrimary: true },
-        { id: 2, name: 'Display 2', width: 1920, height: 1080, refreshRate: 60, isPrimary: false },
-      ]),
-      getWindows: () => Promise.resolve([
-        { handle: 1, title: 'Happy Recorder 3D', processName: 'happy-recorder.exe', processId: 1234 },
-      ]),
-      getCursorPosition: () => Promise.resolve({ x: 500, y: 300 }),
+      pickCaptureItem: () => Promise.resolve(),
       highlightCursor: (config: any) => Promise.resolve(),
       addClickEffect: (config: any) => Promise.resolve(),
 

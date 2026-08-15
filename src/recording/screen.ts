@@ -34,35 +34,15 @@ class ScreenCapture {
   private isCapturing: boolean = false;
 
   /**
-   * Get all available displays
+   * Show the OS's own capture picker (window/monitor thumbnails) and let
+   * the user choose what to record. There's no manual enumeration here --
+   * desktop window/monitor enumeration isn't available to this app's
+   * AppContainer (UWP) sandbox, so the picker is the only supported way
+   * to select a capture target.
    */
-  async getDisplays(): Promise<DisplayInfo[]> {
-    try {
-      // @ts-ignore
-      const displays = await NativeModules.HappyRecorderNative.getDisplays();
-      return displays;
-    } catch (error) {
-      console.error('Failed to get displays:', error);
-      // Return mock data for development
-      return [
-        { id: 1, name: 'Display 1', width: 1920, height: 1080, refreshRate: 60, isPrimary: true },
-        { id: 2, name: 'Display 2', width: 1920, height: 1080, refreshRate: 60, isPrimary: false },
-      ];
-    }
-  }
-
-  /**
-   * Get all open windows
-   */
-  async getWindows(): Promise<WindowInfo[]> {
-    try {
-      // @ts-ignore
-      const windows = await NativeModules.HappyRecorderNative.getWindows();
-      return windows;
-    } catch (error) {
-      console.error('Failed to get windows:', error);
-      return [];
-    }
+  async pickCaptureItem(): Promise<void> {
+    // @ts-ignore
+    await NativeModules.HappyRecorderNative.pickCaptureItem();
   }
 
   /**

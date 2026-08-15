@@ -35,6 +35,35 @@ using namespace winrt::Windows::Storage;
 
 namespace winrt::HappyRecorder3D::implementation
 {
+    namespace
+    {
+        // Not a real SDK function -- this is boilerplate Microsoft's own
+        // GraphicsCapture samples define by hand, wrapping
+        // IDirect3DDxgiInterfaceAccess::GetInterface. It was being called
+        // in this file without ever being defined.
+        template <typename T>
+        winrt::com_ptr<T> GetDXGIInterfaceFromObject(winrt::Windows::Foundation::IInspectable const& object)
+        {
+            auto access = object.as<::Windows::Graphics::DirectX::Direct3D11::IDirect3DDxgiInterfaceAccess>();
+            winrt::com_ptr<T> result;
+            winrt::check_hresult(access->GetInterface(winrt::guid_of<T>(), result.put_void()));
+            return result;
+        }
+
+        // Wraps a raw ID3D11Device as the WinRT IDirect3DDevice that
+        // Direct3D11CaptureFramePool::Create requires -- the two are not the
+        // same type and don't implicitly convert.
+        winrt::Windows::Graphics::DirectX::Direct3D11::IDirect3DDevice CreateDirect3DDeviceFromD3D11Device(
+            winrt::com_ptr<ID3D11Device> const& d3dDevice)
+        {
+            winrt::com_ptr<IDXGIDevice> dxgiDevice = d3dDevice.as<IDXGIDevice>();
+
+            winrt::com_ptr<::IInspectable> inspectable;
+            winrt::check_hresult(CreateDirect3D11DeviceFromDXGIDevice(dxgiDevice.get(), inspectable.put()));
+            return inspectable.as<winrt::Windows::Graphics::DirectX::Direct3D11::IDirect3DDevice>();
+        }
+    }
+
     HappyRecorderNativeModule::~HappyRecorderNativeModule()
     {
         CleanupMediaFoundation();
@@ -113,35 +142,21 @@ namespace winrt::HappyRecorder3D::implementation
                 return;
             }
             
-            // Create capture item
-            auto interopFactory = winrt::get_activation_factory<GraphicsCaptureItem, IGraphicsCaptureItemInterop>();
-            winrt::com_ptr<IGraphicsCaptureItem> captureItemNative;
-            
-            hr = interopFactory->CreateForWindow(
-                GetDesktopWindow(),
-                winrt::guid_of<IGraphicsCaptureItem>(),
-                captureItemNative.put_void()
-            );
-            
-            if (FAILED(hr))
+            // The capture item must already have been chosen via
+            // PickCaptureItem (which shows the OS's own picker UI) --
+            // this app can't enumerate windows/monitors itself, since
+            // that's a desktop-only capability unavailable to AppContainer
+            // UWP apps.
+            if (!m_captureState.captureItem)
             {
-                promise.Reject(L"Failed to create capture item");
+                promise.Reject(L\"No capture item selected. Call PickCaptureItem first.\");
                 return;
             }
-            
-            winrt::com_ptr<::IInspectable> inspectable;
-            hr = captureItemNative.as(inspectable);
-            if (FAILED(hr))
-            {
-                promise.Reject(L"Failed to convert capture item");
-                return;
-            }
-            
-            m_captureState.captureItem = inspectable.as<GraphicsCaptureItem>();
+
             auto size = m_captureState.captureItem.Size();
-            
+
             m_captureState.framePool = Direct3D11CaptureFramePool::Create(
-                m_captureState.d3dDevice,
+                CreateDirect3DDeviceFromD3D11Device(m_captureState.d3dDevice),
                 winrt::Windows::Graphics::DirectX::DirectXPixelFormat::B8G8R8A8UIntNormalized,
                 2,
                 size
@@ -379,105 +394,41 @@ namespace winrt::HappyRecorder3D::implementation
         }
     }
 
-    void HappyRecorderNativeModule::GetDisplays(
-        ReactPromise<JSValueArray> const& promise) noexcept
+    void HappyRecorderNativeModule::PickCaptureItem(
+        ReactPromise<void> const& promise) noexcept
     {
-        try
-        {
-            JSValueArray displays;
-            
-            EnumDisplayMonitors(nullptr, nullptr, [](HMONITOR hMonitor, HDC, LPRECT, LPARAM lParam) -> BOOL {
-                auto displays = reinterpret_cast<JSValueArray*>(lParam);
-                
-                MONITORINFOEX monitorInfo;
-                monitorInfo.cbSize = sizeof(MONITORINFOEX);
-                GetMonitorInfo(hMonitor, &monitorInfo);
-                
-                DEVMODE devMode;
-                devMode.dmSize = sizeof(DEVMODE);
-                EnumDisplaySettings(monitorInfo.szDevice, ENUM_CURRENT_SETTINGS, &devMode);
-                
-                JSValueObject display;
-                display["id"] = static_cast<int>(displays->size());
-                display["name"] = winrt::to_string(monitorInfo.szDevice);
-                display["width"] = monitorInfo.rcMonitor.right - monitorInfo.rcMonitor.left;
-                display["height"] = monitorInfo.rcMonitor.bottom - monitorInfo.rcMonitor.top;
-                display["refreshRate"] = devMode.dmDisplayFrequency;
-                display["isPrimary"] = (monitorInfo.dwFlags & MONITORINFOF_PRIMARY) != 0;
-                
-                displays->push_back(display);
-                return TRUE;
-            }, reinterpret_cast<LPARAM>(&displays));
-            
-            promise.Resolve(displays);
-        }
-        catch (...)
-        {
-            promise.Reject(L"Failed to get displays");
-        }
-    }
+        GraphicsCapturePicker picker;
 
-    void HappyRecorderNativeModule::GetWindows(
-        ReactPromise<JSValueArray> const& promise) noexcept
-    {
-        try
-        {
-            JSValueArray windows;
-            
-            EnumWindows([](HWND hwnd, LPARAM lParam) -> BOOL {
-                auto windows = reinterpret_cast<JSValueArray*>(lParam);
-                
-                if (IsWindowVisible(hwnd) && GetWindowTextLength(hwnd) > 0)
+        picker.PickSingleItemAsync().Completed(
+            [this, promise](
+                winrt::Windows::Foundation::IAsyncOperation<GraphicsCaptureItem> const& asyncOp,
+                winrt::Windows::Foundation::AsyncStatus status) noexcept
+            {
+                try
                 {
-                    wchar_t title[256];
-                    GetWindowText(hwnd, title, 256);
-                    
-                    DWORD pid;
-                    GetWindowThreadProcessId(hwnd, &pid);
-                    
-                    JSValueObject window;
-                    window["handle"] = reinterpret_cast<intptr_t>(hwnd);
-                    window["title"] = winrt::to_string(title);
-                    window["processId"] = static_cast<int>(pid);
-                    
-                    RECT rect;
-                    GetWindowRect(hwnd, &rect);
-                    window["x"] = rect.left;
-                    window["y"] = rect.top;
-                    window["width"] = rect.right - rect.left;
-                    window["height"] = rect.bottom - rect.top;
-                    
-                    windows->push_back(std::move(window));
-                }
-                return TRUE;
-            }, reinterpret_cast<LPARAM>(&windows));
-            
-            promise.Resolve(windows);
-        }
-        catch (...)
-        {
-            promise.Reject(L"Failed to get windows");
-        }
-    }
+                    if (status != winrt::Windows::Foundation::AsyncStatus::Completed)
+                    {
+                        promise.Reject(L"Failed to show capture picker");
+                        return;
+                    }
 
-    void HappyRecorderNativeModule::GetCursorPosition(
-        ReactPromise<JSValueObject> const& promise) noexcept
-    {
-        try
-        {
-            POINT point;
-            GetCursorPos(&point);
-            
-            JSValueObject position;
-            position["x"] = point.x;
-            position["y"] = point.y;
-            
-            promise.Resolve(position);
-        }
-        catch (...)
-        {
-            promise.Reject(L"Failed to get cursor position");
-        }
+                    auto item = asyncOp.GetResults();
+                    if (!item)
+                    {
+                        // User cancelled the picker.
+                        promise.Reject(L"No capture item was selected");
+                        return;
+                    }
+
+                    std::lock_guard<std::mutex> lock(m_stateMutex);
+                    m_captureState.captureItem = item;
+                    promise.Resolve();
+                }
+                catch (...)
+                {
+                    promise.Reject(L"Failed to pick capture item");
+                }
+            });
     }
 
     void HappyRecorderNativeModule::HighlightCursor(
