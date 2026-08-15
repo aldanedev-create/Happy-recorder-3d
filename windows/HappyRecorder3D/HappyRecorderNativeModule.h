@@ -16,7 +16,6 @@
 #include <mfapi.h>
 #include <mfidl.h>
 #include <mfreadwrite.h>
-#include <wrl/client.h>
 #include <chrono>
 #include <mutex>
 #include <atomic>
@@ -32,7 +31,7 @@ using namespace winrt::Windows::Media::Audio;
 using namespace winrt::Windows::Media::Devices;
 using namespace winrt::Windows::Devices::Enumeration;
 using namespace winrt::Windows::Storage;
-using namespace Microsoft::WRL;
+// DO NOT use: using namespace Microsoft::WRL;
 
 namespace winrt::HappyRecorder3D::implementation
 {
@@ -61,7 +60,6 @@ namespace winrt::HappyRecorder3D::implementation
         DWORD audioStreamIndex = 0;
         LONGLONG frameDuration = 0;
         
-        MediaCapture mediaCapture{ nullptr };
         MediaCapture cameraCapture{ nullptr };
         AudioGraph audioGraph{ nullptr };
         AudioDeviceInputNode microphoneNode{ nullptr };
@@ -87,7 +85,6 @@ namespace winrt::HappyRecorder3D::implementation
             d3dDevice = nullptr;
             d3dContext = nullptr;
             sinkWriter = nullptr;
-            mediaCapture = nullptr;
             cameraCapture = nullptr;
             audioGraph = nullptr;
             microphoneNode = nullptr;
@@ -214,7 +211,6 @@ namespace winrt::HappyRecorder3D::implementation
         
         HRESULT InitializeMediaFoundation(const std::wstring& outputPath, UINT32 width, UINT32 height, UINT32 fps);
         HRESULT WriteVideoFrame(ID3D11Texture2D* texture, LONGLONG timestamp);
-        HRESULT WriteAudioFrame(const float* audioData, size_t sampleCount, LONGLONG timestamp);
         void CleanupMediaFoundation();
         void EmitStatusUpdate();
     };
