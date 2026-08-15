@@ -23,10 +23,6 @@ permissions:
 
 env:
   NODE_VERSION: "18"
-  RN_VERSION: "0.72.0"
-  RNW_VERSION: "0.72.0"
-  BOOST_VERSION: "1.76.0.0"
-  CPPWINRT_VERSION: "2.0.200316.3"
   APP_PROJECT: windows/HappyRecorder3D.sln
   WINDOWS_SDK_VERSION: "10.0.19041.0"
   WINDOWS_MIN_VERSION: "10.0.17763.0"
@@ -46,7 +42,7 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
-      - name: Install dependencies
+      - name: Install JavaScript dependencies
         run: npm ci
 
       - name: TypeScript check
@@ -64,8 +60,16 @@ jobs:
     runs-on: windows-2022
 
     steps:
+      # ------------------------------------------------------------
+      # CHECKOUT
+      # ------------------------------------------------------------
+
       - name: Checkout
         uses: actions/checkout@v4
+
+      # ------------------------------------------------------------
+      # NODE
+      # ------------------------------------------------------------
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -73,36 +77,22 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
-      - name: Setup MSBuild
-        uses: microsoft/setup-msbuild@v2
-
-      - name: Setup NuGet
-        uses: NuGet/setup-nuget@v2
-
-      - name: Install dependencies
+      - name: Install JavaScript dependencies
         run: npm ci
 
       # ------------------------------------------------------------
-      # VERIFY VERSIONS
+      # MSBUILD
       # ------------------------------------------------------------
 
-      - name: Verify React Native versions
-        shell: pwsh
-        run: |
-          Write-Host "Node:"
-          node --version
-
-          Write-Host ""
-          Write-Host "NPM:"
-          npm --version
-
-          Write-Host ""
-          Write-Host "React Native packages:"
-          npm list react-native react-native-windows --depth=0
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
 
       # ------------------------------------------------------------
-      # NUGET CONFIGURATION
+      # NUGET
       # ------------------------------------------------------------
+
+      - name: Setup NuGet
+        uses: NuGet/setup-nuget@v2
 
       - name: Configure NuGet
         shell: pwsh
@@ -126,7 +116,7 @@ jobs:
           nuget sources List
 
       # ------------------------------------------------------------
-      # AUTOLINK WINDOWS MODULES
+      # REACT NATIVE WINDOWS AUTOLINKING
       # ------------------------------------------------------------
 
       - name: Apply React Native Windows autolinking
@@ -145,36 +135,103 @@ jobs:
             --proj "windows\HappyRecorder3D\HappyRecorder3D.vcxproj"
 
       # ------------------------------------------------------------
-      # PREPARE WINDOWS PACKAGES DIRECTORY
+      # DISPLAY ENVIRONMENT
       # ------------------------------------------------------------
 
-      - name: Prepare Windows packages directory
+      - name: Show build environment
+        shell: pwsh
+        run: |
+          Write-Host "=========================================="
+          Write-Host "Build Environment"
+          Write-Host "=========================================="
+
+          Write-Host ""
+          Write-Host "Node:"
+          node --version
+
+          Write-Host ""
+          Write-Host "NPM:"
+          npm --version
+
+          Write-Host ""
+          Write-Host "MSBuild:"
+          msbuild -version
+
+          Write-Host ""
+          Write-Host "React Native versions:"
+          npm list react-native react-native-windows
+
+          Write-Host ""
+          Write-Host "Windows SDKs:"
+          Get-ChildItem `
+            "C:\Program Files (x86)\Windows Kits\10\Include" `
+            -Directory |
+            Select-Object -ExpandProperty Name
+
+      # ------------------------------------------------------------
+      # CLEAR OLD NUGET CACHE
+      # ------------------------------------------------------------
+
+      - name: Clear NuGet HTTP cache
+        shell: pwsh
+        run: |
+          nuget locals http-cache -clear
+
+      # ------------------------------------------------------------
+      # MSBUILD PACKAGE RESTORE
+      #
+      # IMPORTANT:
+      # RNW 0.72 uses PackageReference for packages such as:
+      #
+      # boost 1.76.0.0
+      # Microsoft.ReactNative
+      # Microsoft.Windows.CppWinRT
+      #
+      # Therefore MSBuild restore is required.
+      # ------------------------------------------------------------
+
+      - name: Restore MSBuild NuGet packages
+        shell: pwsh
+        run: |
+          Write-Host "=========================================="
+          Write-Host "Restoring MSBuild NuGet packages"
+          Write-Host "=========================================="
+
+          msbuild "$env:APP_PROJECT" `
+            /t:Restore `
+            /p:Configuration=Release `
+            /p:Platform=x64 `
+            /p:RestorePackagesConfig=true `
+            /p:RestoreIgnoreFailedSources=false `
+            /p:WindowsTargetPlatformVersion="${{ env.WINDOWS_SDK_VERSION }}" `
+            /p:TargetPlatformMinVersion="${{ env.WINDOWS_MIN_VERSION }}" `
+            /p:WindowsTargetPlatformMinVersion="${{ env.WINDOWS_MIN_VERSION }}" `
+            /v:minimal
+
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "MSBuild NuGet restore failed."
+            exit $LASTEXITCODE
+          }
+
+      # ------------------------------------------------------------
+      # RESTORE LEGACY packages.config FILES
+      #
+      # Some RN Windows native modules still contain packages.config.
+      # Restore those separately.
+      # ------------------------------------------------------------
+
+      - name: Restore packages.config dependencies
         shell: pwsh
         run: |
           $packagesDirectory = "$env:GITHUB_WORKSPACE\windows\packages"
-
-          if (Test-Path $packagesDirectory) {
-            Remove-Item `
-              -Path $packagesDirectory `
-              -Recurse `
-              -Force
-          }
 
           New-Item `
             -ItemType Directory `
             -Force `
             -Path $packagesDirectory | Out-Null
 
-          Write-Host "Packages directory:"
-          Write-Host $packagesDirectory
+          Write-Host "Looking for packages.config files..."
 
-      # ------------------------------------------------------------
-      # FIND ALL PACKAGES.CONFIG FILES
-      # ------------------------------------------------------------
-
-      - name: Find NuGet package configurations
-        shell: pwsh
-        run: |
           $packageConfigs = Get-ChildItem `
             -Path "$env:GITHUB_WORKSPACE" `
             -Recurse `
@@ -182,244 +239,96 @@ jobs:
             -File `
             -ErrorAction SilentlyContinue
 
-          if (!$packageConfigs) {
-            Write-Host "No packages.config files found."
-          }
-          else {
+          if ($packageConfigs) {
             Write-Host ""
-            Write-Host "packages.config files found:"
-            Write-Host "============================"
+            Write-Host "Found packages.config files:"
 
             foreach ($config in $packageConfigs) {
-              Write-Host $config.FullName
+              Write-Host "  $($config.FullName)"
+            }
+
+            foreach ($config in $packageConfigs) {
+              Write-Host ""
+              Write-Host "Restoring:"
+              Write-Host "$($config.FullName)"
+
+              nuget restore "$($config.FullName)" `
+                -PackagesDirectory "$packagesDirectory" `
+                -Source "https://api.nuget.org/v3/index.json" `
+                -NonInteractive `
+                -Verbosity detailed
+
+              if ($LASTEXITCODE -ne 0) {
+                Write-Error "NuGet restore failed for $($config.FullName)."
+                exit $LASTEXITCODE
+              }
             }
           }
-
-      # ------------------------------------------------------------
-      # RESTORE PACKAGES.CONFIG
-      # ------------------------------------------------------------
-
-      - name: Restore packages.config files
-        shell: pwsh
-        run: |
-          $packagesDirectory = "$env:GITHUB_WORKSPACE\windows\packages"
-
-          $packageConfigs = Get-ChildItem `
-            -Path "$env:GITHUB_WORKSPACE" `
-            -Recurse `
-            -Filter "packages.config" `
-            -File `
-            -ErrorAction SilentlyContinue
-
-          foreach ($config in $packageConfigs) {
-            Write-Host ""
-            Write-Host "=============================================="
-            Write-Host "Restoring:"
-            Write-Host $config.FullName
-            Write-Host "=============================================="
-
-            nuget restore "$($config.FullName)" `
-              -PackagesDirectory "$packagesDirectory" `
-              -Source "https://api.nuget.org/v3/index.json" `
-              -NonInteractive `
-              -Verbosity detailed
-
-            if ($LASTEXITCODE -ne 0) {
-              Write-Error "NuGet restore failed for:"
-              Write-Error $config.FullName
-              exit $LASTEXITCODE
-            }
+          else {
+            Write-Host "No packages.config files found."
           }
-
-      # ------------------------------------------------------------
-      # EXPLICITLY RESTORE BOOST 1.76.0
-      # ------------------------------------------------------------
-
-      - name: Restore Boost 1.76.0
-        shell: pwsh
-        run: |
-          $packagesDirectory = "$env:GITHUB_WORKSPACE\windows\packages"
-
-          Write-Host ""
-          Write-Host "Restoring Boost 1.76.0.0..."
-          Write-Host ""
-
-          nuget install boost `
-            -Version 1.76.0 `
-            -OutputDirectory "$packagesDirectory" `
-            -Source "https://api.nuget.org/v3/index.json" `
-            -NonInteractive `
-            -DependencyVersion Highest `
-            -Verbosity detailed
-
-          if ($LASTEXITCODE -ne 0) {
-            Write-Error "Failed to restore Boost 1.76.0."
-            exit $LASTEXITCODE
-          }
-
-      # ------------------------------------------------------------
-      # EXPLICITLY RESTORE CPPWINRT
-      # ------------------------------------------------------------
-
-      - name: Restore CppWinRT
-        shell: pwsh
-        run: |
-          $packagesDirectory = "$env:GITHUB_WORKSPACE\windows\packages"
-
-          Write-Host ""
-          Write-Host "Restoring Microsoft.Windows.CppWinRT..."
-          Write-Host ""
-
-          nuget install Microsoft.Windows.CppWinRT `
-            -Version "$env:CPPWINRT_VERSION" `
-            -OutputDirectory "$packagesDirectory" `
-            -Source "https://api.nuget.org/v3/index.json" `
-            -NonInteractive `
-            -DependencyVersion Highest `
-            -Verbosity detailed
-
-          if ($LASTEXITCODE -ne 0) {
-            Write-Error "Failed to restore Microsoft.Windows.CppWinRT."
-            exit $LASTEXITCODE
-          }
-
-      # ------------------------------------------------------------
-      # EXPLICITLY RESTORE MICROSOFT.REACTNATIVE
-      # ------------------------------------------------------------
-
-      - name: Restore Microsoft.ReactNative 0.72.0
-        shell: pwsh
-        run: |
-          $packagesDirectory = "$env:GITHUB_WORKSPACE\windows\packages"
-
-          Write-Host ""
-          Write-Host "Restoring Microsoft.ReactNative 0.72.0..."
-          Write-Host ""
-
-          nuget install Microsoft.ReactNative `
-            -Version "$env:RNW_VERSION" `
-            -OutputDirectory "$packagesDirectory" `
-            -Source "https://api.nuget.org/v3/index.json" `
-            -NonInteractive `
-            -DependencyVersion Highest `
-            -Verbosity detailed
-
-          if ($LASTEXITCODE -ne 0) {
-            Write-Error "Failed to restore Microsoft.ReactNative 0.72.0."
-            exit $LASTEXITCODE
-          }
-
-      # ------------------------------------------------------------
-      # SHOW RESTORED PACKAGES
-      # ------------------------------------------------------------
-
-      - name: Show restored Windows packages
-        shell: pwsh
-        run: |
-          $packagesDirectory = "$env:GITHUB_WORKSPACE\windows\packages"
-
-          Write-Host ""
-          Write-Host "Restored packages:"
-          Write-Host "=================="
-
-          Get-ChildItem `
-            -Path $packagesDirectory `
-            -Directory |
-            Sort-Object Name |
-            Select-Object -ExpandProperty Name
 
       # ------------------------------------------------------------
       # VERIFY BOOST
       # ------------------------------------------------------------
 
-      - name: Verify Boost
+      - name: Verify Boost 1.76.0
         shell: pwsh
         run: |
-          $packagesDirectory = "$env:GITHUB_WORKSPACE\windows\packages"
+          Write-Host "=========================================="
+          Write-Host "Searching for Boost 1.76.0"
+          Write-Host "=========================================="
 
-          $boostDirectory = Join-Path `
-            $packagesDirectory `
-            "boost.1.76.0"
+          $possibleBoostPaths = @(
+            "$env:GITHUB_WORKSPACE\windows\packages\boost.1.76.0.0",
+            "$env:USERPROFILE\.nuget\packages\boost\1.76.0",
+            "$env:USERPROFILE\.nuget\packages\boost\1.76.0.0"
+          )
 
-          if (!(Test-Path $boostDirectory)) {
-            $boostDirectory = Join-Path `
-              $packagesDirectory `
-              "boost.1.76.0.0"
+          $boostFound = $false
+
+          foreach ($path in $possibleBoostPaths) {
+            if (Test-Path $path) {
+              Write-Host ""
+              Write-Host "FOUND BOOST:"
+              Write-Host $path
+
+              $header = Get-ChildItem `
+                -Path $path `
+                -Recurse `
+                -Filter "expr_iif.hpp" `
+                -File `
+                -ErrorAction SilentlyContinue |
+                Select-Object -First 1
+
+              if ($header) {
+                Write-Host ""
+                Write-Host "FOUND REQUIRED BOOST HEADER:"
+                Write-Host $header.FullName
+                $boostFound = $true
+              }
+            }
           }
 
-          if (!(Test-Path $boostDirectory)) {
-            Write-Error "Boost 1.76.0 was not restored."
-            Write-Host "Available packages:"
-
-            Get-ChildItem `
-              -Path $packagesDirectory `
-              -Directory |
-              Select-Object -ExpandProperty Name
-
-            exit 1
-          }
-
-          Write-Host "FOUND Boost:"
-          Write-Host $boostDirectory
-
-          $boostHeader = Get-ChildItem `
-            -Path $boostDirectory `
-            -Recurse `
-            -Filter "expr_iif.hpp" `
-            -File `
-            -ErrorAction SilentlyContinue |
-            Select-Object -First 1
-
-          if (!$boostHeader) {
-            Write-Error "Boost was restored but expr_iif.hpp was not found."
-            exit 1
-          }
-
-          Write-Host "FOUND Boost header:"
-          Write-Host $boostHeader.FullName
-
-      # ------------------------------------------------------------
-      # VERIFY CPPWINRT
-      # ------------------------------------------------------------
-
-      - name: Verify CppWinRT
-        shell: pwsh
-        run: |
-          $packagesDirectory = "$env:GITHUB_WORKSPACE\windows\packages"
-
-          $cppWinRT = Join-Path `
-            $packagesDirectory `
-            "Microsoft.Windows.CppWinRT.$env:CPPWINRT_VERSION"
-
-          if (!(Test-Path $cppWinRT)) {
-            Write-Error "Microsoft.Windows.CppWinRT $env:CPPWINRT_VERSION was not restored."
+          if (!$boostFound) {
+            Write-Host ""
+            Write-Host "Boost was not found in the expected locations."
 
             Write-Host ""
-            Write-Host "Available CppWinRT packages:"
+            Write-Host "Searching NuGet global package cache..."
 
             Get-ChildItem `
-              -Path $packagesDirectory `
-              -Directory |
-              Where-Object {
-                $_.Name -like "Microsoft.Windows.CppWinRT*"
-              } |
-              Select-Object -ExpandProperty Name
+              "$env:USERPROFILE\.nuget\packages" `
+              -Directory `
+              -ErrorAction SilentlyContinue |
+              Where-Object { $_.Name -match "boost" } |
+              Select-Object -ExpandProperty FullName
+
+            Write-Error `
+              "Boost 1.76.0 was not restored correctly. Required header expr_iif.hpp is missing."
 
             exit 1
           }
-
-          $cppWinRTProps = Join-Path `
-            $cppWinRT `
-            "build\native\Microsoft.Windows.CppWinRT.props"
-
-          if (!(Test-Path $cppWinRTProps)) {
-            Write-Error "CppWinRT props file is missing:"
-            Write-Error $cppWinRTProps
-            exit 1
-          }
-
-          Write-Host "FOUND:"
-          Write-Host $cppWinRTProps
 
       # ------------------------------------------------------------
       # VERIFY MICROSOFT.REACTNATIVE
@@ -428,89 +337,116 @@ jobs:
       - name: Verify Microsoft.ReactNative
         shell: pwsh
         run: |
-          $packagesDirectory = "$env:GITHUB_WORKSPACE\windows\packages"
+          Write-Host "=========================================="
+          Write-Host "Searching for Microsoft.ReactNative"
+          Write-Host "=========================================="
 
-          $reactNative = Join-Path `
-            $packagesDirectory `
-            "Microsoft.ReactNative.$env:RNW_VERSION"
+          $paths = @(
+            "$env:GITHUB_WORKSPACE\windows\packages\Microsoft.ReactNative.0.72.0",
+            "$env:USERPROFILE\.nuget\packages\microsoft.reactnative\0.72.0"
+          )
 
-          if (!(Test-Path $reactNative)) {
-            Write-Error "Microsoft.ReactNative $env:RNW_VERSION was not restored."
+          $found = $false
 
-            Write-Host ""
-            Write-Host "Available Microsoft.ReactNative packages:"
+          foreach ($path in $paths) {
+            if (Test-Path $path) {
+              Write-Host ""
+              Write-Host "FOUND:"
+              Write-Host $path
+              $found = $true
+            }
+          }
 
-            Get-ChildItem `
-              -Path $packagesDirectory `
-              -Directory |
-              Where-Object {
-                $_.Name -like "Microsoft.ReactNative*"
-              } |
-              Select-Object -ExpandProperty Name
-
+          if (!$found) {
+            Write-Error "Microsoft.ReactNative 0.72.0 was not restored."
             exit 1
           }
 
-          Write-Host "FOUND:"
-          Write-Host $reactNative
-
       # ------------------------------------------------------------
-      # VERIFY REQUIRED BOOST HEADER DIRECTLY
+      # VERIFY CPPWINRT
       # ------------------------------------------------------------
 
-      - name: Verify Boost include path
+      - name: Verify CppWinRT
         shell: pwsh
         run: |
-          $packagesDirectory = "$env:GITHUB_WORKSPACE\windows\packages"
+          Write-Host "=========================================="
+          Write-Host "Searching for Microsoft.Windows.CppWinRT"
+          Write-Host "=========================================="
 
-          $boostInclude = Get-ChildItem `
-            -Path $packagesDirectory `
+          $found = Get-ChildItem `
+            "$env:GITHUB_WORKSPACE\windows\packages" `
             -Recurse `
-            -Filter "expr_iif.hpp" `
+            -Filter "Microsoft.Windows.CppWinRT.props" `
             -File `
-            -ErrorAction SilentlyContinue |
-            Select-Object -First 1
+            -ErrorAction SilentlyContinue
 
-          if (!$boostInclude) {
-            Write-Error "Cannot find boost/preprocessor/control/expr_iif.hpp."
-            exit 1
+          if ($found) {
+            Write-Host ""
+            Write-Host "FOUND CppWinRT:"
+            $found | ForEach-Object {
+              Write-Host $_.FullName
+            }
+          }
+          else {
+            Write-Host ""
+            Write-Host "Searching global NuGet cache..."
+
+            $foundGlobal = Get-ChildItem `
+              "$env:USERPROFILE\.nuget\packages" `
+              -Recurse `
+              -Filter "Microsoft.Windows.CppWinRT.props" `
+              -File `
+              -ErrorAction SilentlyContinue
+
+            if ($foundGlobal) {
+              $foundGlobal | ForEach-Object {
+                Write-Host $_.FullName
+              }
+            }
+            else {
+              Write-Error "Microsoft.Windows.CppWinRT.props was not restored."
+              exit 1
+            }
           }
 
-          Write-Host "Boost include directory:"
-          Write-Host $boostInclude.Directory.Parent.Parent.FullName
-
       # ------------------------------------------------------------
-      # WINDOWS SDK
+      # SHOW NUGET PACKAGE DIRECTORIES
       # ------------------------------------------------------------
 
-      - name: Show Windows SDKs
+      - name: Show restored native packages
         shell: pwsh
         run: |
-          Write-Host "Installed Windows SDKs:"
-          Write-Host "======================"
+          Write-Host "=========================================="
+          Write-Host "Windows packages directory"
+          Write-Host "=========================================="
 
-          Get-ChildItem `
-            "C:\Program Files (x86)\Windows Kits\10\Include" `
-            -Directory |
-            Select-Object -ExpandProperty Name
+          $packagesDirectory = "$env:GITHUB_WORKSPACE\windows\packages"
 
-      # ------------------------------------------------------------
-      # VISUAL STUDIO
-      # ------------------------------------------------------------
-
-      - name: Verify Visual Studio and MSBuild
-        shell: pwsh
-        run: |
-          Write-Host "MSBuild:"
-          msbuild -version
+          if (Test-Path $packagesDirectory) {
+            Get-ChildItem `
+              $packagesDirectory `
+              -Directory |
+              Sort-Object Name |
+              Select-Object -ExpandProperty Name
+          }
 
           Write-Host ""
-          Write-Host "Visual Studio installation:"
-          & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" `
-            -latest `
-            -products * `
-            -requires Microsoft.Component.MSBuild `
-            -property installationPath
+          Write-Host "=========================================="
+          Write-Host "NuGet global packages"
+          Write-Host "=========================================="
+
+          $globalPackages = "$env:USERPROFILE\.nuget\packages"
+
+          if (Test-Path $globalPackages) {
+            Get-ChildItem `
+              $globalPackages `
+              -Directory `
+              -ErrorAction SilentlyContinue |
+              Where-Object {
+                $_.Name -match "boost|microsoft.reactnative|cppwinrt"
+              } |
+              Select-Object -ExpandProperty FullName
+          }
 
       # ------------------------------------------------------------
       # BABEL
@@ -520,7 +456,7 @@ jobs:
         run: npm ls @babel/core
 
       # ------------------------------------------------------------
-      # PRE-BUNDLE
+      # CREATE BUNDLE DIRECTORY
       # ------------------------------------------------------------
 
       - name: Create bundle output directory
@@ -531,45 +467,53 @@ jobs:
             -Force `
             -Path "ci-bundle-test" | Out-Null
 
+      # ------------------------------------------------------------
+      # PRE-BUNDLE
+      # ------------------------------------------------------------
+
       - name: Pre-bundle check
-        run: >
-          npx react-native bundle
-          --platform windows
-          --dev false
-          --entry-file index.js
-          --bundle-output ci-bundle-test/index.windows.bundle
-          --assets-dest ci-bundle-test
-          --verbose
+        shell: pwsh
+        run: |
+          npx react-native bundle `
+            --platform windows `
+            --dev false `
+            --entry-file index.js `
+            --bundle-output "ci-bundle-test\index.windows.bundle" `
+            --assets-dest "ci-bundle-test" `
+            --verbose
+
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "React Native Windows bundle failed."
+            exit $LASTEXITCODE
+          }
 
       # ------------------------------------------------------------
-      # BUILD MSIX
+      # BUILD
       # ------------------------------------------------------------
 
       - name: Build Windows MSIX
         shell: pwsh
         run: |
-          $artifactsDirectory = "$env:GITHUB_WORKSPACE\artifacts"
+          Write-Host "=========================================="
+          Write-Host "Building Happy Recorder 3D"
+          Write-Host "=========================================="
 
           New-Item `
             -ItemType Directory `
             -Force `
-            -Path $artifactsDirectory | Out-Null
-
-          Write-Host ""
-          Write-Host "Starting Windows MSIX build..."
-          Write-Host ""
+            -Path "$env:GITHUB_WORKSPACE\artifacts" | Out-Null
 
           msbuild "$env:APP_PROJECT" `
             /m `
             /p:Configuration=Release `
             /p:Platform=x64 `
-            /p:WindowsTargetPlatformVersion="$env:WINDOWS_SDK_VERSION" `
-            /p:TargetPlatformMinVersion="$env:WINDOWS_MIN_VERSION" `
-            /p:WindowsTargetPlatformMinVersion="$env:WINDOWS_MIN_VERSION" `
+            /p:WindowsTargetPlatformVersion="${{ env.WINDOWS_SDK_VERSION }}" `
+            /p:TargetPlatformMinVersion="${{ env.WINDOWS_MIN_VERSION }}" `
+            /p:WindowsTargetPlatformMinVersion="${{ env.WINDOWS_MIN_VERSION }}" `
             /p:AppxBundle=Always `
             /p:AppxBundlePlatforms=x64 `
             /p:UapAppxPackageBuildMode=StoreUpload `
-            /p:AppxPackageDir="$artifactsDirectory\" `
+            /p:AppxPackageDir="$env:GITHUB_WORKSPACE\artifacts\" `
             "-flp:logfile=$env:GITHUB_WORKSPACE\msbuild.log;verbosity=diagnostic"
 
           if ($LASTEXITCODE -ne 0) {
@@ -578,7 +522,7 @@ jobs:
           }
 
       # ------------------------------------------------------------
-      # UPLOAD LOG
+      # UPLOAD BUILD LOG
       # ------------------------------------------------------------
 
       - name: Upload build log
@@ -606,13 +550,13 @@ jobs:
           if-no-files-found: error
 
   # --------------------------------------------------------------
-  # GITHUB RELEASE
+  # RELEASE
   # --------------------------------------------------------------
 
   release:
     name: Publish GitHub release
     needs: package
-    if: |
+    if: >
       needs.package.result == 'success' &&
       github.event_name == 'workflow_dispatch' &&
       inputs.create_release == true
