@@ -3,6 +3,17 @@
 #include <fstream>
 #include <sstream>
 
+// This project doesn't reference WIL (Microsoft.Windows.ImplementationLibrary),
+// which is where RETURN_IF_FAILED normally comes from -- define the same
+// semantics locally instead of adding a new dependency.
+#ifndef RETURN_IF_FAILED
+#define RETURN_IF_FAILED(expr) \
+    do { \
+        HRESULT __hr_local = (expr); \
+        if (FAILED(__hr_local)) { return __hr_local; } \
+    } while (0)
+#endif
+
 #pragma comment(lib, "mfplat.lib")
 #pragma comment(lib, "mfreadwrite.lib")
 #pragma comment(lib, "mfuuid.lib")
@@ -1136,7 +1147,7 @@ namespace winrt::HappyRecorder3D::implementation
             status["isRecording"] = true;
             status["isPaused"] = m_captureState.isPaused;
             
-            m_reactContext.EmitJSEvent(L"onStatusUpdate", status);
+            m_reactContext.EmitJSEvent(L"RCTDeviceEventEmitter", L"onStatusUpdate", status);
         }
     }
 }
