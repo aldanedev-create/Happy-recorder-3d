@@ -92,12 +92,30 @@ jobs:
 
       # Restore every NuGet packages.config in the project,
       # including packages belonging to native React Native modules.
+      - name: Setup NuGet
+        uses: NuGet/setup-nuget@v2
+
+      - name: Configure NuGet
+        shell: pwsh
+        run: |
+          nuget sources Add `
+            -Name nuget.org `
+            -Source "https://api.nuget.org/v3/index.json" `
+            -NonInteractive `
+            -Force
+
+          Write-Host "NuGet sources:"
+          nuget sources List
+
       - name: Restore NuGet packages
         shell: pwsh
         run: |
           $packagesDirectory = "$env:GITHUB_WORKSPACE\windows\packages"
 
-          New-Item -ItemType Directory -Force -Path $packagesDirectory | Out-Null
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path $packagesDirectory | Out-Null
 
           $packageConfigs = Get-ChildItem `
             -Path "$env:GITHUB_WORKSPACE" `
@@ -106,36 +124,36 @@ jobs:
             -File `
             -ErrorAction SilentlyContinue
 
-          Write-Host "NuGet package configuration files found:"
-          $packageConfigs | ForEach-Object {
-            Write-Host $_.FullName
+          if (!$packageConfigs) {
+            Write-Error "No packages.config files were found."
+            exit 1
+          }
+
+          Write-Host ""
+          Write-Host "NuGet package configuration files:"
+          Write-Host "----------------------------------"
+
+          foreach ($config in $packageConfigs) {
+            Write-Host $config.FullName
           }
 
           foreach ($config in $packageConfigs) {
             Write-Host ""
-            Write-Host "Restoring packages from:"
-            Write-Host $config.FullName
+            Write-Host "=========================================="
+            Write-Host "Restoring: $($config.FullName)"
+            Write-Host "=========================================="
 
-            nuget restore $config.FullName `
-              -PackagesDirectory $packagesDirectory `
-              -NonInteractive
+            nuget restore "$($config.FullName)" `
+              -PackagesDirectory "$packagesDirectory" `
+              -Source "https://api.nuget.org/v3/index.json" `
+              -NonInteractive `
+              -Verbosity detailed
+
+            if ($LASTEXITCODE -ne 0) {
+              Write-Error "NuGet restore failed for $($config.FullName)."
+              exit $LASTEXITCODE
+            }
           }
-
-      # Verify the CppWinRT package actually used by HappyRecorderNative.
-      - name: Verify CppWinRT package
-        shell: pwsh
-        run: |
-          $packagesDirectory = "$env:GITHUB_WORKSPACE\windows\packages"
-
-          $cppWinRT = Join-Path `
-            $packagesDirectory `
-            "Microsoft.Windows.CppWinRT.2.0.240405.15\build\native\Microsoft.Windows.CppWinRT.props"
-
-          if (!(Test-Path $cppWinRT)) {
-            Write-Error "Microsoft.Windows.CppWinRT 2.0.240405.15 was not restored."
-            exit 1
-          }
-
           Write-Host "FOUND: $cppWinRT"
 
       # Verify the React Native Windows NuGet package version.
