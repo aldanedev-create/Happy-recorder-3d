@@ -1,6 +1,18 @@
 #pragma once
 
-#include "pch.h"
+// This file opts out of the shared project PCH (see HappyRecorder3D.vcxproj)
+// and controls its own include order deliberately: raw ABI interop headers
+// must be parsed before any C++/WinRT `using namespace` directive is active,
+// or SDK headers like Windows.Storage.Provider.h get ambiguous
+// EventRegistrationToken/IUnknown symbols.
+#define NOMINMAX
+#include <windows.graphics.capture.interop.h>
+#include <windows.graphics.directx.direct3d11.interop.h>
+#include <unknwn.h>
+#include <hstring.h>
+#include <restrictederrorinfo.h>
+#include <windows.h>
+
 #include <NativeModules.h>
 #include <winrt/Windows.Graphics.Capture.h>
 #include <winrt/Windows.Graphics.DirectX.Direct3D11.h>
@@ -10,8 +22,6 @@
 #include <winrt/Windows.Media.Devices.h>
 #include <winrt/Windows.Devices.Enumeration.h>
 #include <winrt/Windows.Storage.h>
-#include <windows.graphics.capture.interop.h>
-#include <windows.graphics.directx.direct3d11.interop.h>
 #include <d3d11.h>
 #include <mfapi.h>
 #include <mfidl.h>

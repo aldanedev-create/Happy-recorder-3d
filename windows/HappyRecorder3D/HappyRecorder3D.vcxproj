@@ -135,7 +135,15 @@
     </ClCompile>
     <ClCompile Include="ReactPackageProvider.cpp" />
     <ClCompile Include="AutolinkedNativeModules.g.cpp" />
-    <ClCompile Include="HappyRecorderNativeModule.cpp" />
+    <ClCompile Include="HappyRecorderNativeModule.cpp">
+      <!-- This file mixes raw ABI interop headers (windows.graphics.capture.interop.h,
+           windows.graphics.directx.direct3d11.interop.h) with C++/WinRT projected
+           headers. The shared pch.h activates `using namespace winrt::Windows::Foundation;`
+           before those raw headers get processed, which causes ambiguous EventRegistrationToken/
+           IUnknown symbols inside SDK headers like Windows.Storage.Provider.h. Excluding
+           this file from the shared PCH lets it control its own include order instead. -->
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="pch.cpp">
       <PrecompiledHeader>Create</PrecompiledHeader>
     </ClCompile>
