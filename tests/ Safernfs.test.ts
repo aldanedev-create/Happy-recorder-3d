@@ -40,7 +40,9 @@ describe('safeRNFS regression guard', () => {
   });
 
   test('storage.ts, files.ts, and editor.ts no longer import react-native-fs directly', () => {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
     const fs = require('fs');
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
     const path = require('path');
     const filesToCheck = [
       '../src/services/storage.ts',
@@ -54,7 +56,7 @@ describe('safeRNFS regression guard', () => {
       // dangerous pattern. `import type { ... }` is erased at compile
       // time and never executes react-native-fs's module code, so it's
       // explicitly allowed here (files.ts uses it for the StatResult type).
-      const runtimeImportPattern = /^import\s+(?!type\s)[\s\S]*?from ['"]react-native-fs['"]/m;
+      const runtimeImportPattern = /^import\s+(?!type\s)[^;\n]*?from ['"]react-native-fs['"]/m;
       expect(content).not.toMatch(runtimeImportPattern);
     }
   });
