@@ -6,12 +6,12 @@
 // or SDK headers like Windows.Storage.Provider.h get ambiguous
 // EventRegistrationToken/IUnknown symbols.
 #define NOMINMAX
+#include <windows.h>
 #include <windows.graphics.capture.interop.h>
 #include <windows.graphics.directx.direct3d11.interop.h>
 #include <unknwn.h>
 #include <hstring.h>
 #include <restrictederrorinfo.h>
-#include <windows.h>
 
 #include <NativeModules.h>
 #include <winrt/Windows.Graphics.Capture.h>
@@ -20,6 +20,7 @@
 #include <winrt/Windows.Media.MediaProperties.h>
 #include <winrt/Windows.Media.Audio.h>
 #include <winrt/Windows.Media.Devices.h>
+#include <winrt/Windows.Media.Render.h>
 #include <winrt/Windows.Devices.Enumeration.h>
 #include <winrt/Windows.Storage.h>
 #include <d3d11.h>

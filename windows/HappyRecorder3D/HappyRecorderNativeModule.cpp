@@ -29,6 +29,7 @@ using namespace winrt::Windows::Media::Capture;
 using namespace winrt::Windows::Media::MediaProperties;
 using namespace winrt::Windows::Media::Audio;
 using namespace winrt::Windows::Media::Devices;
+using namespace winrt::Windows::Media::Render;
 using namespace winrt::Windows::Devices::Enumeration;
 using namespace winrt::Windows::Storage;
 
@@ -446,7 +447,7 @@ namespace winrt::HappyRecorder3D::implementation
                     window["width"] = rect.right - rect.left;
                     window["height"] = rect.bottom - rect.top;
                     
-                    windows->push_back(window);
+                    windows->push_back(std::move(window));
                 }
                 return TRUE;
             }, reinterpret_cast<LPARAM>(&windows));
@@ -526,7 +527,7 @@ namespace winrt::HappyRecorder3D::implementation
                 JSValueObject dev;
                 dev["id"] = winrt::to_string(device.Id());
                 dev["name"] = winrt::to_string(device.Name());
-                result.push_back(dev);
+                result.push_back(std::move(dev));
             }
             
             promise.Resolve(result);
@@ -641,7 +642,7 @@ namespace winrt::HappyRecorder3D::implementation
                 JSValueObject dev;
                 dev["id"] = winrt::to_string(device.Id());
                 dev["name"] = winrt::to_string(device.Name());
-                result.push_back(dev);
+                result.push_back(std::move(dev));
             }
             
             promise.Resolve(result);
