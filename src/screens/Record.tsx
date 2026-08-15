@@ -15,6 +15,8 @@ import type { RootStackParamList } from '../App';
 import Card from '../components/Card';
 import Button from '../components/Button';
 import Modal from '../components/Modal';
+import { screenCapture } from '../recording/screen';
+import { recorder } from '../recording/recorder';
 
 type RecordScreenNavigationProp = NativeStackNavigationProp<RootStackParamList, 'Record'>;
 
@@ -58,6 +60,10 @@ const Record: React.FC = () => {
   const [isRecording, setIsRecording] = useState(false);
   const [showCountdown, setShowCountdown] = useState(false);
   const [countdown, setCountdown] = useState(3);
+  const [captureItemPicked, setCaptureItemPicked] = useState(false);
+  const [pickingCapture, setPickingCapture] = useState(false);
+  const [captureError, setCaptureError] = useState<string | null>(null);
+  const [startError, setStartError] = useState<string | null>(null);
   const [showProjectModal, setShowProjectModal] = useState(false);
   const [showBugModal, setShowBugModal] = useState(false);
   const [projectName, setProjectName] = useState('');
@@ -80,33 +86,93 @@ const Record: React.FC = () => {
     }
   };
 
-  const handleStartRecording = () => {
+  /**
+   * Show the OS's own capture picker (window/monitor thumbnails) and wait
+   * for the user's selection. Must resolve before we ever call
+   * recorder.initialize() (native InitializeRecording), since the native
+   * side no longer falls back to the full desktop window -- it just uses
+   * whatever item this already picked.
+   */
+  const handlePickCaptureItem = async (): Promise<boolean> => {
+    setPickingCapture(true);
+    setCaptureError(null);
+    try {
+      await screenCapture.pickCaptureItem();
+      setCaptureItemPicked(true);
+      return true;
+    } catch (error) {
+      setCaptureItemPicked(false);
+      setCaptureError(
+        error instanceof Error ? error.message : 'Failed to open the capture picker'
+      );
+      return false;
+    } finally {
+      setPickingCapture(false);
+    }
+  };
+
+  const handleStartRecording = async () => {
+    setStartError(null);
+
+    // Make sure a capture source has been picked via the system picker
+    // before we ever try to initialize the native recorder.
+    let picked = captureItemPicked;
+    if (!picked) {
+      picked = await handlePickCaptureItem();
+    }
+    if (!picked) return;
+
+    try {
+      await recorder.initialize({
+        mode: config.mode,
+        screen: config.screen,
+        camera: config.camera,
+        microphone: config.microphone,
+        systemAudio: config.systemAudio,
+        quality: config.quality,
+        fps: config.fps,
+        ...(config.mode === 'project' ? { projectMetadata: { name: projectName, purpose: projectPurpose } } : {}),
+        ...(config.mode === 'bug' ? { bugMetadata: { title: bugTitle, application: bugApplication, version: bugVersion } } : {}),
+      });
+    } catch (error) {
+      setStartError(error instanceof Error ? error.message : 'Failed to initialize recording');
+      return;
+    }
+
     if (countdownInterval.current) clearInterval(countdownInterval.current);
     setCountdown(3);
     setShowCountdown(true);
     let count = 3;
-    countdownInterval.current = setInterval(() => {
+    countdownInterval.current = setInterval(async () => {
       count -= 1;
       setCountdown(count);
       if (count === 0) {
         if (countdownInterval.current) clearInterval(countdownInterval.current);
         countdownInterval.current = null;
         setShowCountdown(false);
-        setIsRecording(true);
-        // Start actual recording logic here
-        console.log('🎥 Recording started with config:', config);
+        try {
+          await recorder.start();
+          setIsRecording(true);
+          console.log('🎥 Recording started with config:', config);
+        } catch (error) {
+          setStartError(error instanceof Error ? error.message : 'Failed to start recording');
+        }
       }
     }, 1000);
   };
 
-  const handleStopRecording = () => {
+  const handleStopRecording = async () => {
     if (countdownInterval.current) clearInterval(countdownInterval.current);
     countdownInterval.current = null;
     setShowCountdown(false);
     setIsRecording(false);
-    // Stop recording logic here
-    console.log('⏹ Recording stopped');
-    navigation.navigate('Editor');
+    try {
+      await recorder.stop();
+      console.log('⏹ Recording stopped');
+      navigation.navigate('Editor');
+    } catch (error) {
+      setStartError(error instanceof Error ? error.message : 'Failed to stop recording');
+    }
   };
 
   const renderScreenOptions = () => {
@@ -139,6 +205,10 @@ const Record: React.FC = () => {
                 // Set the selected one
                 newScreen[option.key as keyof typeof newScreen] = true;
                 setConfig({ ...config, screen: newScreen });
+                // A previous pick is no longer valid once the desired
+                // capture target type changes -- make them re-pick.
+                setCaptureItemPicked(false);
+                setCaptureError(null);
               }}
             >
               <Text style={styles.screenOptionText}>{option.label}</Text>
@@ -227,6 +297,34 @@ const Record: React.FC = () => {
       {/* Screen Options */}
       {renderScreenOptions()}
 
+      {/* Capture Source Picker */}
+      <Card style={styles.captureCard}>
+        <Text style={styles.label}>Capture Source</Text>
+        <Text style={styles.captureHint}>
+          Pick exactly what to capture using the OS&apos;s own picker before
+          recording can start.
+        </Text>
+        <Button
+          title={
+            pickingCapture
+              ? 'Opening picker…'
+              : captureItemPicked
+              ? '🖥️ Change Capture Source'
+              : '🖥️ Choose What to Record'
+          }
+          onPress={handlePickCaptureItem}
+          variant={captureItemPicked ? 'secondary' : 'primary'}
+          size="medium"
+          loading={pickingCapture}
+        />
+        {captureItemPicked && !pickingCapture && (
+          <Text style={styles.captureStatusOk}>✅ Capture source selected</Text>
+        )}
+        {captureError && (
+          <Text style={styles.captureStatusError}>⚠️ {captureError}</Text>
+        )}
+      </Card>
+
       {/* Audio/Video Toggles */}
       <Card style={styles.togglesCard}>
         <View style={styles.toggleRow}>
@@ -292,12 +390,14 @@ const Record: React.FC = () => {
       {renderModeSpecificConfig()}
 
       {/* Recording Controls */}
+      {startError && <Text style={styles.captureStatusError}>⚠️ {startError}</Text>}
       {!isRecording ? (
         <Button
           title="🎬 START RECORDING"
           onPress={handleStartRecording}
           variant="danger"
           size="large"
+          loading={pickingCapture}
           style={styles.recordButton}
         />
       ) : (
@@ -488,6 +588,25 @@ const styles = StyleSheet.create({
   screenOptionText: {
     color: '#ffffff',
     fontSize: 14,
+  },
+  captureCard: {
+    marginBottom: 20,
+    padding: 16,
+  },
+  captureHint: {
+    fontSize: 13,
+    color: '#a8a8b8',
+    marginBottom: 12,
+  },
+  captureStatusOk: {
+    fontSize: 13,
+    color: '#4caf50',
+    marginTop: 10,
+  },
+  captureStatusError: {
+    fontSize: 13,
+    color: '#ff4444',
+    marginTop: 10,
   },
   togglesCard: {
     marginBottom: 20,
