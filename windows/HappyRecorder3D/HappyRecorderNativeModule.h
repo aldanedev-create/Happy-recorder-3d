@@ -105,7 +105,7 @@ namespace winrt::HappyRecorder3D::implementation
         }
     };
 
-    REACT_MODULE(HappyRecorderNative)
+    REACT_MODULE(HappyRecorderNativeModule, L"HappyRecorderNative")
     struct HappyRecorderNativeModule
     {
         HappyRecorderNativeModule() = default;
