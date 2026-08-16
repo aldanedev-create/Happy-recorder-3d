@@ -1,5 +1,4 @@
 import { NativeModules } from 'react-native';
-import { recorder } from './recorder';
 
 export interface ScreenCaptureConfig {
   fullScreen?: boolean;
@@ -29,6 +28,22 @@ export interface WindowInfo {
   bounds: { x: number; y: number; width: number; height: number };
 }
 
+// The native module's real method names (see HappyRecorderNativeModule.h)
+// use "Recording", not "ScreenCapture" -- this file used to call methods
+// like initializeScreenCapture/startScreenCapture that were never actually
+// implemented natively under those names.
+function getNativeModule(): Record<string, (...args: unknown[]) => Promise<unknown>> {
+  const native = NativeModules.HappyRecorderNative;
+  if (!native) {
+    throw new Error(
+      'HappyRecorderNative native module is not available. This usually means ' +
+      'the native module failed to register at startup -- check that the app ' +
+      'was built from the current windows/HappyRecorder3D project.'
+    );
+  }
+  return native;
+}
+
 class ScreenCapture {
   private currentConfig: ScreenCaptureConfig | null = null;
   private isCapturing: boolean = false;
@@ -41,12 +56,12 @@ class ScreenCapture {
    * to select a capture target.
    */
   async pickCaptureItem(): Promise<void> {
-    // @ts-ignore
-    await NativeModules.HappyRecorderNative.pickCaptureItem();
+    await getNativeModule().PickCaptureItem();
   }
 
   /**
-   * Initialize screen capture
+   * Initialize screen capture. A capture item must already have been
+   * chosen via pickCaptureItem(), or this rejects.
    */
   async initialize(config: ScreenCaptureConfig): Promise<void> {
     try {
@@ -54,18 +69,17 @@ class ScreenCapture {
       this.isCapturing = false;
 
       const nativeConfig = {
-        captureFullScreen: config.fullScreen || true,
-        captureWindow: config.window || false,
-        captureRegion: config.region || false,
-        captureMonitor: config.monitor || false,
+        captureFullScreen: config.fullScreen ?? true,
+        captureWindow: config.window ?? false,
+        captureRegion: config.region ?? false,
+        captureMonitor: config.monitor ?? false,
         regionBounds: config.regionBounds,
-        displayId: config.displayId || 1,
-        fps: config.fps || 60,
-        quality: config.quality || '1080p',
+        displayId: config.displayId ?? 1,
+        fps: config.fps ?? 60,
+        quality: config.quality ?? '1080p',
       };
 
-      // @ts-ignore
-      await NativeModules.HappyRecorderNative.initializeScreenCapture(nativeConfig);
+      await getNativeModule().InitializeRecording(nativeConfig);
       console.log('🖥️ Screen capture initialized');
     } catch (error) {
       console.error('Failed to initialize screen capture:', error);
@@ -83,8 +97,7 @@ class ScreenCapture {
       }
 
       this.isCapturing = true;
-      // @ts-ignore
-      await NativeModules.HappyRecorderNative.startScreenCapture();
+      await getNativeModule().StartRecording();
       console.log('🖥️ Screen capture started');
     } catch (error) {
       console.error('Failed to start screen capture:', error);
@@ -98,8 +111,7 @@ class ScreenCapture {
   async stop(): Promise<void> {
     try {
       this.isCapturing = false;
-      // @ts-ignore
-      await NativeModules.HappyRecorderNative.stopScreenCapture();
+      await getNativeModule().StopRecording();
       console.log('🖥️ Screen capture stopped');
     } catch (error) {
       console.error('Failed to stop screen capture:', error);
@@ -112,8 +124,7 @@ class ScreenCapture {
    */
   async pause(): Promise<void> {
     try {
-      // @ts-ignore
-      await NativeModules.HappyRecorderNative.pauseScreenCapture();
+      await getNativeModule().PauseRecording();
       console.log('⏸️ Screen capture paused');
     } catch (error) {
       console.error('Failed to pause screen capture:', error);
@@ -126,26 +137,11 @@ class ScreenCapture {
    */
   async resume(): Promise<void> {
     try {
-      // @ts-ignore
-      await NativeModules.HappyRecorderNative.resumeScreenCapture();
+      await getNativeModule().ResumeRecording();
       console.log('▶️ Screen capture resumed');
     } catch (error) {
       console.error('Failed to resume screen capture:', error);
       throw error;
-    }
-  }
-
-  /**
-   * Select a region for recording
-   */
-  async selectRegion(): Promise<{ x: number; y: number; width: number; height: number } | null> {
-    try {
-      // @ts-ignore
-      const region = await NativeModules.HappyRecorderNative.selectRegion();
-      return region;
-    } catch (error) {
-      console.error('Failed to select region:', error);
-      return null;
     }
   }
 
@@ -164,8 +160,7 @@ class ScreenCapture {
       if (this.isCapturing) {
         await this.stop();
       }
-      // @ts-ignore
-      await NativeModules.HappyRecorderNative.cleanupScreenCapture();
+      await getNativeModule().CleanupScreenCapture();
       this.currentConfig = null;
       console.log('🧹 Screen capture cleaned up');
     } catch (error) {
@@ -174,26 +169,11 @@ class ScreenCapture {
   }
 
   /**
-   * Get cursor position
-   */
-  async getCursorPosition(): Promise<{ x: number; y: number }> {
-    try {
-      // @ts-ignore
-      const position = await NativeModules.HappyRecorderNative.getCursorPosition();
-      return position;
-    } catch (error) {
-      console.error('Failed to get cursor position:', error);
-      return { x: 0, y: 0 };
-    }
-  }
-
-  /**
    * Highlight cursor (for tutorial mode)
    */
   async highlightCursor(enabled: boolean, color?: string, size?: number): Promise<void> {
     try {
-      // @ts-ignore
-      await NativeModules.HappyRecorderNative.highlightCursor({
+      await getNativeModule().HighlightCursor({
         enabled,
         color: color || '#ff6b6b',
         size: size || 24,
@@ -208,8 +188,7 @@ class ScreenCapture {
    */
   async addClickEffect(enabled: boolean, color?: string, duration?: number): Promise<void> {
     try {
-      // @ts-ignore
-      await NativeModules.HappyRecorderNative.addClickEffect({
+      await getNativeModule().AddClickEffect({
         enabled,
         color: color || '#ffd93d',
         duration: duration || 300,

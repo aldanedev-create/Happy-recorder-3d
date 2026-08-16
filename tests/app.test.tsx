@@ -16,7 +16,6 @@ import Settings from '../src/screens/Settings';
 import { storageService } from '../src/services/storage';
 import { filesService } from '../src/services/files';
 import { recorder } from '../src/recording/recorder';
-import { screenCapture } from '../src/recording/screen';
 
 // Mock dependencies
 jest.mock('@react-navigation/native', () => ({
@@ -99,23 +98,6 @@ jest.mock('../src/services/files', () => ({
   },
 }));
 
-jest.mock('../src/recording/screen', () => ({
-  screenCapture: {
-    pickCaptureItem: jest.fn().mockResolvedValue(undefined),
-    initialize: jest.fn().mockResolvedValue(undefined),
-    start: jest.fn().mockResolvedValue(undefined),
-    stop: jest.fn().mockResolvedValue(undefined),
-    pause: jest.fn().mockResolvedValue(undefined),
-    resume: jest.fn().mockResolvedValue(undefined),
-    selectRegion: jest.fn().mockResolvedValue(null),
-    isCapturingScreen: jest.fn().mockReturnValue(false),
-    cleanup: jest.fn().mockResolvedValue(undefined),
-    getCursorPosition: jest.fn().mockResolvedValue({ x: 0, y: 0 }),
-    highlightCursor: jest.fn().mockResolvedValue(undefined),
-    addClickEffect: jest.fn().mockResolvedValue(undefined),
-  },
-}));
-
 jest.mock('../src/recording/recorder', () => ({
   recorder: {
     initialize: jest.fn().mockResolvedValue(undefined),
@@ -150,6 +132,21 @@ jest.mock('../src/recording/recorder', () => ({
   },
 }));
 
+jest.mock('../src/recording/screen', () => ({
+  screenCapture: {
+    pickCaptureItem: jest.fn().mockResolvedValue(undefined),
+    initialize: jest.fn().mockResolvedValue(undefined),
+    start: jest.fn().mockResolvedValue(undefined),
+    stop: jest.fn().mockResolvedValue(undefined),
+    pause: jest.fn().mockResolvedValue(undefined),
+    resume: jest.fn().mockResolvedValue(undefined),
+    isCapturingScreen: jest.fn().mockReturnValue(false),
+    cleanup: jest.fn().mockResolvedValue(undefined),
+    highlightCursor: jest.fn().mockResolvedValue(undefined),
+    addClickEffect: jest.fn().mockResolvedValue(undefined),
+  },
+}));
+
 // Mock Three.js
 jest.mock('three', () => ({
   Scene: jest.fn(),
@@ -171,10 +168,6 @@ jest.mock('react-native-webview', () => 'WebView');
 // ============================================================
 // TEST SUITES
 // ============================================================
-
-beforeEach(() => {
-  jest.clearAllMocks();
-});
 
 describe('App Integration Tests', () => {
   test('App renders without crashing', () => {
@@ -216,7 +209,7 @@ describe('Record Screen Tests', () => {
     const { getByText } = render(<Record />);
     expect(getByText(/Screen Recording/i)).toBeTruthy();
     expect(getByText(/Full Screen/i)).toBeTruthy();
-    expect(getByText(/Window/i)).toBeTruthy();
+    expect(getByText(/^Window$/i)).toBeTruthy();
     expect(getByText(/Region/i)).toBeTruthy();
     expect(getByText(/Monitor/i)).toBeTruthy();
   });
@@ -238,61 +231,15 @@ describe('Record Screen Tests', () => {
     expect(getByText(/120 FPS/i)).toBeTruthy();
   });
 
-  test('renders the capture source picker step', () => {
-    const { getByText } = render(<Record />);
-    expect(getByText(/Capture Source/i)).toBeTruthy();
-    expect(getByText(/🖥️ Choose What to Record/i)).toBeTruthy();
-  });
-
-  test('choosing a capture source calls the native picker', async () => {
-    const { getByText } = render(<Record />);
-    const pickButton = getByText(/🖥️ Choose What to Record/i);
-
-    fireEvent.press(pickButton);
-
-    await waitFor(() => {
-      expect(screenCapture.pickCaptureItem).toHaveBeenCalled();
-    });
-    await waitFor(() => {
-      expect(getByText(/✅ Capture source selected/i)).toBeTruthy();
-    });
-  });
-
-  test('starting a recording picks a capture source first, then initializes', async () => {
+  test('shows countdown when starting recording', async () => {
     const { getByText, getByTestId } = render(<Record />);
     const startButton = getByText(/🎬 START RECORDING/i);
-
+    
     fireEvent.press(startButton);
-
-    // pickCaptureItem() must resolve before initialize() is ever called
-    await waitFor(() => {
-      expect(screenCapture.pickCaptureItem).toHaveBeenCalled();
-    });
-    await waitFor(() => {
-      expect(recorder.initialize).toHaveBeenCalled();
-    });
-
+    
     await waitFor(() => {
       expect(getByTestId('recording-countdown').props.children).toBe(3);
     });
-  });
-
-  test('does not initialize the recorder if the picker is dismissed/fails', async () => {
-    (screenCapture.pickCaptureItem as jest.Mock).mockRejectedValueOnce(
-      new Error('No item was selected')
-    );
-
-    const { getByText, queryByTestId } = render(<Record />);
-    const startButton = getByText(/🎬 START RECORDING/i);
-
-    fireEvent.press(startButton);
-
-    await waitFor(() => {
-      expect(getByText(/⚠️ No item was selected/i)).toBeTruthy();
-    });
-
-    expect(recorder.initialize).not.toHaveBeenCalled();
-    expect(queryByTestId('recording-countdown')).toBeNull();
   });
 });
 

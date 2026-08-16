@@ -1,6 +1,5 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
-  Modal as RNModal,
   View,
   StyleSheet,
   TouchableOpacity,
@@ -8,6 +7,7 @@ import {
   ScrollView,
   KeyboardAvoidingView,
   Platform,
+  Animated,
 } from 'react-native';
 
 interface ModalProps {
@@ -22,31 +22,71 @@ interface ModalProps {
   closeOnBackdropPress?: boolean;
 }
 
+// react-native-windows doesn't ship a native implementation of RN's built-in
+// <Modal> (there's no RCTModalHostView on Windows), so using it crashes at
+// runtime with "requireNativeComponent: 'RCTModalHostView' was not found in
+// the UIManager." This component keeps the same external API but is backed
+// by a plain absolutely-positioned overlay instead, which works on every
+// platform including Windows.
 const Modal: React.FC<ModalProps> = ({
   visible,
   onRequestClose,
   children,
-  transparent = true,
   animationType = 'slide',
   style,
   contentStyle,
   backdropOpacity = 0.7,
   closeOnBackdropPress = true,
 }) => {
+  // Keep the overlay mounted while the exit animation plays, then unmount.
+  const [isMounted, setIsMounted] = useState(visible);
+  const backdropAnim = useRef(new Animated.Value(0)).current;
+  const contentAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (visible) {
+      setIsMounted(true);
+      const duration = animationType === 'none' ? 0 : 200;
+      Animated.parallel([
+        Animated.timing(backdropAnim, { toValue: 1, duration, useNativeDriver: true }),
+        Animated.timing(contentAnim, { toValue: 1, duration, useNativeDriver: true }),
+      ]).start();
+    } else {
+      const duration = animationType === 'none' ? 0 : 150;
+      Animated.parallel([
+        Animated.timing(backdropAnim, { toValue: 0, duration, useNativeDriver: true }),
+        Animated.timing(contentAnim, { toValue: 0, duration, useNativeDriver: true }),
+      ]).start(({ finished }) => {
+        if (finished) setIsMounted(false);
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible, animationType]);
+
+  if (!isMounted) {
+    return null;
+  }
+
   const handleBackdropPress = () => {
     if (closeOnBackdropPress && onRequestClose) {
       onRequestClose();
     }
   };
 
+  const contentTransform =
+    animationType === 'slide'
+      ? [
+          {
+            translateY: contentAnim.interpolate({
+              inputRange: [0, 1],
+              outputRange: [40, 0],
+            }),
+          },
+        ]
+      : [];
+
   return (
-    <RNModal
-      visible={visible}
-      onRequestClose={onRequestClose}
-      transparent={transparent}
-      animationType={animationType}
-      statusBarTranslucent
-    >
+    <View style={styles.overlay} pointerEvents="box-none">
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
         style={styles.container}
@@ -58,8 +98,19 @@ const Modal: React.FC<ModalProps> = ({
           ]}
           activeOpacity={1}
           onPress={handleBackdropPress}
-        />
-        <View style={[styles.contentWrapper, style]}>
+        >
+          <Animated.View style={[StyleSheet.absoluteFill, { opacity: backdropAnim }]} />
+        </TouchableOpacity>
+        <Animated.View
+          style={[
+            styles.contentWrapper,
+            style,
+            {
+              opacity: contentAnim,
+              transform: contentTransform,
+            },
+          ]}
+        >
           <ScrollView
             contentContainerStyle={styles.scrollContent}
             showsVerticalScrollIndicator={false}
@@ -68,13 +119,22 @@ const Modal: React.FC<ModalProps> = ({
               {children}
             </View>
           </ScrollView>
-        </View>
+        </Animated.View>
       </KeyboardAvoidingView>
-    </RNModal>
+    </View>
   );
 };
 
 const styles = StyleSheet.create({
+  overlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 1000,
+    elevation: 1000,
+  },
   container: {
     flex: 1,
     justifyContent: 'center',
