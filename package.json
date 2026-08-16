@@ -28,7 +28,6 @@
     "react-native-video": "5.2.1",
     "react-native-webview": "^13.6.2",
     "react-native-windows": "0.72.0",
-    "simple-git": "^3.27.0",
     "three": "0.160.0"
   },
   "devDependencies": {

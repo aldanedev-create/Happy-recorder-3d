@@ -4,7 +4,6 @@ import { audioCapture } from './audio';
 import { storageService } from '../services/storage';
 import { filesService } from '../services/files';
 import { nativeService } from '../services/native';
-import simpleGit from 'simple-git';
 
 // Type definitions
 export interface RecordingConfig {
@@ -26,6 +25,10 @@ export interface RecordingConfig {
     name: string;
     purpose: string;
     files?: string[];
+    // Optional path to the project's repo root, used to look up git info
+    // via the native module. Not required -- if omitted, we try to infer
+    // it from the first tracked file, and fall back to no git info at all.
+    repoPath?: string;
   };
   bugMetadata?: {
     title: string;
@@ -123,8 +126,9 @@ class Recorder {
       this.config = config;
       this.status.state = 'initializing';
 
-      // Get Git info for code snapshots
-      this.gitInfo = await this.loadGitInfo();
+      // Get Git info for code snapshots (project mode only -- needs a repo path)
+      const repoPath = config.projectMetadata?.repoPath || this.inferRepoPath(config.projectMetadata?.files);
+      this.gitInfo = await this.loadGitInfo(repoPath);
 
       // Generate recording ID
       this.recordingId = `rec_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
@@ -400,66 +404,54 @@ class Recorder {
   }
 
   /**
-   * Get Git information for the current project
-   * Real implementation using simple-git
+   * Get Git information for the current project.
+   *
+   * This calls the native module's getGitCommit/getGitBranch, not the
+   * `simple-git` npm package: simple-git shells out via Node's
+   * `child_process`, which doesn't exist in the React Native JS engine, and
+   * its compiled output isn't even Metro-bundleable (it uses static class
+   * blocks Metro's Babel preset can't parse). Only native code can safely
+   * read git state, so that's where this belongs.
    */
-  private async loadGitInfo(): Promise<GitInfo | null> {
+  private async loadGitInfo(repoPath?: string): Promise<GitInfo | null> {
+    if (!repoPath) {
+      console.log('ℹ️ No project repo path available, skipping Git info');
+      return null;
+    }
+
+    if (!nativeService.isAvailable()) {
+      return null;
+    }
+
     try {
-      const git = simpleGit(process.cwd());
-      
-      // Check if it's a git repository
-      const isRepo = await git.checkIsRepo();
-      if (!isRepo) {
-        console.log('ℹ️ Not a git repository');
+      const native = nativeService.getModule();
+      const [commit, branch] = await Promise.all([
+        native.getGitCommit(repoPath),
+        native.getGitBranch(repoPath),
+      ]);
+
+      if (!commit || !branch) {
+        console.log('ℹ️ Not a git repository:', repoPath);
         return null;
       }
 
-      // Get current commit hash
-      const commit = await git.revparse(['HEAD']);
-      const shortCommit = commit.substring(0, 7);
-
-      // Get current branch
-      const branchInfo = await git.branch();
-      const branch = branchInfo.current;
-
-      // Get remote URL
-      let remote: string | undefined;
-      try {
-        const remotes = await git.getRemotes(true);
-        if (remotes.length > 0) {
-          remote = remotes[0].refs.fetch;
-        }
-      } catch {
-        // Remote not available
-      }
-
-      // Get commit details
-      let author: string | undefined;
-      let date: string | undefined;
-      let message: string | undefined;
-      try {
-        const log = await git.log({ maxCount: 1 });
-        if (log.total > 0 && log.latest) {
-          author = log.latest.author_name;
-          date = log.latest.date;
-          message = log.latest.message;
-        }
-      } catch {
-        // Commit details not available
-      }
-
-      return {
-        commit: shortCommit,
-        branch: branch,
-        remote: remote,
-        author: author,
-        date: date,
-        message: message,
-      };
+      return { commit, branch };
     } catch (error) {
       console.warn('⚠️ Git information not available:', error);
       return null;
     }
+  }
+
+  /**
+   * Best-effort guess at a project's repo root from one of its tracked
+   * file paths, used when the caller doesn't pass an explicit repoPath.
+   */
+  private inferRepoPath(files?: string[]): string | undefined {
+    const first = files?.[0];
+    if (!first) return undefined;
+    const separator = first.includes('\\') ? '\\' : '/';
+    const idx = first.lastIndexOf(separator);
+    return idx > 0 ? first.substring(0, idx) : undefined;
   }
 
   /**
