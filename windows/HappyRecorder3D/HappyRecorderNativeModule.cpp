@@ -149,7 +149,7 @@ namespace winrt::HappyRecorder3D::implementation
             // UWP apps.
             if (!m_captureState.captureItem)
             {
-                promise.Reject(L\"No capture item selected. Call PickCaptureItem first.\");
+                promise.Reject(L"No capture item selected. Call PickCaptureItem first.");
                 return;
             }
 
